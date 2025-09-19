@@ -1,0 +1,29 @@
+[worker.oci]
+# Keep GC enabled and set size caps for caches
+gc = true
+
+# Limit exec.cachemount caches to 25 GiB
+[[worker.oci.gcpolicy]]
+filters = ["type==exec.cachemount"]
+keepBytes = 26843545600
+keepDuration = 604800000000000
+
+# Limit everything that is not exec.cachemount to 30 GiB
+[[worker.oci.gcpolicy]]
+filters = ["type!=exec.cachemount"]
+keepBytes = 32212254720
+
+# Limit total cache size to 50 GiB
+[[worker.oci.gcpolicy]]
+all = true
+keepBytes = 53687091200
+
+# Allow pushing/pulling to local insecure registry
+[registry."host.docker.internal:5001"]
+http = true
+insecure = true
+
+# Optional: also allow localhost:5001 if ever used inside the builder
+[registry."localhost:5001"]
+http = true
+insecure = true

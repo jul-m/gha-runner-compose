@@ -1,0 +1,170 @@
+#!/bin/sh
+set -eu
+# Cache-aware curl wrapper (POSIX sh)
+# Only intercepts very simple cases: exactly one URL and either "-o <file>" or "-O".
+# In all other cases, delegates to the real curl.
+
+CACHE_DIR="${GHA_FETCH_CACHE_DIR:-/var/cache/gha-download-cache}"
+mkdir -p "$CACHE_DIR" 2>/dev/null || true
+
+# Debug logging
+echo "[CURL_WRAPPER] Args: $*" >> /tmp/curl-debug.log
+
+find_real() {
+  name="$1"
+  self="$0"
+  for d in /usr/bin /bin /usr/local/bin /opt/homebrew/bin /usr/local/sbin /usr/sbin /sbin; do
+    if [ -x "$d/$name" ] && [ "$d/$name" != "$self" ]; then
+      printf '%s' "$d/$name"
+      return 0
+    fi
+  done
+  cand="$(command -v "$name" 2>/dev/null || true)"
+  if [ "${cand:-}" != "" ] && [ "$cand" != "$self" ]; then
+    printf '%s' "$cand"
+    return 0
+  fi
+  return 1
+}
+
+REAL_CURL="$(find_real curl)" || { echo "real curl not found" >&2; exit 1; }
+
+# Parse minimal flags in POSIX sh
+OUT=""
+USE_CAP_O=0
+URL=""
+NONOPT_COUNT=0
+HAS_W=0
+W_VAL=""
+EXPECT_OUT=0
+SKIP_NEXT=0
+
+i=1
+while [ $i -le $# ]; do
+  eval a="\${$i}"
+  
+  if [ $SKIP_NEXT -eq 1 ]; then
+    SKIP_NEXT=0
+    i=$((i+1))
+    continue
+  fi
+  
+  case "$a" in
+    --proto|--tlsv1.2|--proto=*|--tlsv1.2=*|--progress-bar|--silent|--location|--fail|--show-error)
+      # Skip curl protocol/TLS options and other standard options
+      if [ "${a#*=}" = "$a" ]; then
+        # No = in argument, value is next argument (only for some options)
+        case "$a" in
+          --proto|--tlsv1.2)
+            SKIP_NEXT=1
+            ;;
+        esac
+      fi
+      ;;
+    -o|--output)
+      i=$((i+1))
+      eval OUT="\${$i:-}"
+      ;;
+    -??*o*|-?o*)
+      # Combined short options cluster containing -o (e.g., -4sSLo)
+      # The next argument should be the output file
+      i=$((i+1))
+      eval OUT="\${$i:-}"
+      ;;
+    *o-*)
+      # combined short options containing o- (e.g. -fsSo-)
+      OUT="-"
+      ;;
+    -O)
+      USE_CAP_O=1
+      ;;
+    -O-)
+      # explicit -O- treat as stdout
+      OUT="-"
+      ;;
+    -w)
+      HAS_W=1
+      i=$((i+1)) # capture format value
+      eval W_VAL="\${$i:-}"
+      ;;
+    -*)
+      ;;
+    *)
+      URL="$a"
+      NONOPT_COUNT=$((NONOPT_COUNT+1))
+      ;;
+  esac
+  i=$((i+1))
+done
+
+# Intercept only the simplest safe case: one URL, output specified
+if [ "${URL:-}" = "" ] || [ $NONOPT_COUNT -ne 1 ]; then
+  exec "$REAL_CURL" "$@"
+fi
+
+if [ $USE_CAP_O -eq 1 ] && [ "${OUT:-}" = "" ]; then
+  # derive output from URL basename
+  OUT=$(basename "${URL%%\?*}")
+fi
+
+if [ "${OUT:-}" = "" ]; then
+  echo "[CURL_WRAPPER] DELEGATE: OUT empty - stdout behavior" >> /tmp/curl-debug.log
+  exec "$REAL_CURL" "$@"
+fi
+
+echo "[CURL_WRAPPER] INTERCEPT: URL='$URL' OUT='$OUT' HAS_W=$HAS_W W_VAL='$W_VAL'" >> /tmp/curl-debug.log
+
+# Compute cache key
+KEY=""
+if command -v sha256sum >/dev/null 2>&1; then
+  KEY=$(printf '%s' "$URL" | sha256sum | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  KEY=$(printf '%s' "$URL" | shasum -a 256 | awk '{print $1}')
+elif command -v md5sum >/dev/null 2>&1; then
+  KEY=$(printf '%s' "$URL" | md5sum | awk '{print $1}')
+else
+  # No hash tool, delegate
+  exec "$REAL_CURL" "$@"
+fi
+
+CACHE_FILE="$CACHE_DIR/$KEY"
+TMP_FILE="$(mktemp)"
+
+# If caller expects HTTP code via -w, preserve behavior and still cache
+if [ $HAS_W -eq 1 ] && [ "${W_VAL}" = "%{http_code}" ]; then
+  # Cache hit
+  if [ -f "$CACHE_FILE" ]; then
+    cp -f "$CACHE_FILE" "$OUT"
+    # Print 200 to stdout to satisfy -w '%{http_code}'
+    printf '%s' "200"
+    exit 0
+  fi
+  # Cache miss: run real curl, tee the http code so we can decide to cache
+  CODE_FILE="$(mktemp)"
+  # Capture stdout (the -w output) to a file, then forward it back to stdout for the caller
+  "${REAL_CURL}" "$@" > "$CODE_FILE"
+  CURL_EXIT=$?
+  HTTP_CODE=$(cat "$CODE_FILE" 2>/dev/null || true)
+  cat "$CODE_FILE"
+  rm -f "$CODE_FILE"
+  # Only cache on 200 and when output file exists
+  if [ "${HTTP_CODE}" = "200" ] && [ -s "$OUT" ]; then
+    cp -f "$OUT" "$CACHE_FILE"
+  fi
+  exit "$CURL_EXIT"
+fi
+
+# No -w: standard cache flow using our own fetch
+if [ -f "$CACHE_FILE" ]; then
+  cp -f "$CACHE_FILE" "$OUT"
+  exit 0
+fi
+
+if "$REAL_CURL" -L --fail -sS -o "$TMP_FILE" "$URL"; then
+  mv "$TMP_FILE" "$CACHE_FILE"
+  cp -f "$CACHE_FILE" "$OUT"
+  exit 0
+else
+  rm -f "$TMP_FILE"
+  exec "$REAL_CURL" "$@"
+fi

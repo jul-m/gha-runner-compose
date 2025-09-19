@@ -1,0 +1,98 @@
+#!/bin/bash
+################################################################################
+##  File:  bin/systemctl.sh
+##  Desc:  Fake systemctl script to simulate systemctl commands in Docker containers
+##         Wraps to service command for basic operations
+################################################################################
+
+# List of services to ignore
+IGNORED_SERVICES=("apt-daily.timer" "apt-daily.service" "apt-daily-upgrade.timer" "apt-daily-upgrade.service")
+
+# Function to handle service commands
+handle_service() {
+    local command=$1
+    local service=$2
+
+    # Check if service is in the ignored list
+    if [[ " ${IGNORED_SERVICES[@]} " =~ " $service " ]]; then
+        echo "Service $service is ignored in container environment."
+        exit 0
+    fi
+
+    # Strip .service suffix if present
+    service=$(echo "$service" | sed 's/\.service$//')
+
+    case $command in
+        start|stop|restart|status)
+            if command -v service >/dev/null 2>&1; then
+                if $QUIET; then
+                    service "$service" "$command" >/dev/null 2>&1
+                else
+                    service "$service" "$command"
+                fi
+            elif [ -x "/etc/init.d/$service" ]; then
+                if $QUIET; then
+                    "/etc/init.d/$service" "$command" >/dev/null 2>&1
+                else
+                    "/etc/init.d/$service" "$command"
+                fi
+            else
+                echo "Error: Service $service not found or not supported"
+                exit 1
+            fi
+            ;;
+        is-active)
+            if command -v service >/dev/null 2>&1; then
+                service "$service" status >/dev/null 2>&1
+            elif [ -x "/etc/init.d/$service" ]; then
+                "/etc/init.d/$service" status >/dev/null 2>&1
+            else
+                exit 1
+            fi
+            ;;
+        enable|disable)
+            echo "Warning: $command not fully supported in container environment. Ignoring."
+            ;;
+        *)
+            echo "Error: Command $command not supported"
+            exit 1
+            ;;
+    esac
+}
+
+# Main logic
+COMMAND=""
+SERVICE=""
+QUIET=false
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        --quiet)
+            QUIET=true
+            shift
+            ;;
+        start|stop|restart|status|is-active|enable|disable)
+            COMMAND=$1
+            shift
+            if [ $# -gt 0 ]; then
+                SERVICE=$1
+                shift
+            else
+                echo "Error: Missing service name"
+                exit 1
+            fi
+            break
+            ;;
+        *)
+            echo "Error: Unknown option or command: $1"
+            exit 1
+            ;;
+    esac
+done
+
+if [ -z "$COMMAND" ] || [ -z "$SERVICE" ]; then
+    echo "Usage: $0 [OPTIONS...] COMMAND SERVICE"
+    exit 1
+fi
+
+handle_service "$COMMAND" "$SERVICE"

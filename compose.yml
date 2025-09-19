@@ -1,0 +1,16 @@
+name: gh-selfhost-runners
+
+services:
+  gha-runner1:
+    image: ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest
+    container_name: gha-runner1
+    env_file:
+      - .env
+    environment:
+      - RUNNER_NAME=gha-runner1
+    volumes:
+      - gha-runner1_data:/opt/actions-runner
+    # privileged: true  # Enable only if your workflows run Docker inside the runner (DinD)
+
+volumes:
+  gha-runner1_data:

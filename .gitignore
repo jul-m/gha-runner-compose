@@ -1,0 +1,8 @@
+# Directories
+tmp/
+.vscode/
+
+# Files
+.DS_Store
+*.log
+*.local.*

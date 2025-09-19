@@ -1,0 +1,158 @@
+#!/bin/sh
+set -eu
+# POSIX cache-aware wget wrapper (mirrors curl wrapper behavior)
+# Intercepts only simple cases: single URL and optional -O/-o output. Otherwise delegates.
+
+
+CACHE_DIR="${GHA_FETCH_CACHE_DIR:-/var/cache/gha-download-cache}"
+mkdir -p "$CACHE_DIR" 2>/dev/null || true
+
+find_real() {
+  name="$1"
+  self="$0"
+  for d in /usr/local/bin /usr/bin /bin /opt/homebrew/bin /usr/local/sbin /usr/sbin /sbin; do
+    if [ -x "$d/$name" ] && [ "$d/$name" != "$self" ]; then
+      printf '%s' "$d/$name"
+      return 0
+    fi
+  done
+  cand="$(command -v "$name" 2>/dev/null || true)"
+  if [ "${cand:-}" != "" ] && [ "$cand" != "$self" ]; then
+    printf '%s' "$cand"
+    return 0
+  fi
+  return 1
+}
+
+REAL_WGET="$(find_real wget)" || { echo "real wget not found" >&2; exit 1; }
+
+# Minimal POSIX arg parsing for -O/-o and single URL
+OUT=""
+URL=""
+NONOPT_COUNT=0
+USE_CAP_O=0
+
+i=1
+while [ $i -le $# ]; do
+  eval a="\${$i}"
+  case "$a" in
+    -O)
+      # -O takes the next arg as output
+      i=$((i+1))
+      eval OUT="\${$i:-}"
+      ;;
+    -O*)
+      # -Ooutput
+      OUT="${a#-O}"
+      ;;
+    *O)
+      # handles combined short options ending with O like -qO -> next arg is output
+      i=$((i+1))
+      eval OUT="\${$i:-}"
+      ;;
+    *O-*)
+      # handles combined short options like -qO- -> output to stdout
+      OUT="-"
+      ;;
+    -o|--output)
+      i=$((i+1))
+      eval OUT="\${$i:-}"
+      ;;
+    -o*)
+      OUT="${a#-o}"
+      ;;
+    --output=*)
+      OUT="${a#--output=}"
+      ;;
+    -* )
+      ;;
+    *)
+      URL="$a"
+      NONOPT_COUNT=$((NONOPT_COUNT+1))
+      ;;
+  esac
+  i=$((i+1))
+done
+
+# If not a simple single-URL invocation, delegate
+if [ "${URL:-}" = "" ] || [ $NONOPT_COUNT -ne 1 ]; then
+  exec "$REAL_WGET" "$@"
+fi
+
+# If the caller requested output to stdout (OUT='-'), delegate to real wget so
+# the pipe (e.g. `wget -qO- ... | gpg`) works as expected.
+if [ "${OUT:-}" = "-" ]; then
+  exec "$REAL_WGET" "$@"
+fi
+
+if [ $USE_CAP_O -eq 1 ] && [ "${OUT:-}" = "" ]; then
+  OUT=$(basename "${URL%%\?*}")
+fi
+
+# If no explicit output specified, wget uses basename of URL by default
+if [ "${OUT:-}" = "" ]; then
+  OUT=$(basename "${URL%%\?*}")
+fi
+
+
+# Compute cache key using available hash tool
+if command -v sha256sum >/dev/null 2>&1; then
+  KEY=$(printf '%s' "$URL" | sha256sum | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  KEY=$(printf '%s' "$URL" | shasum -a 256 | awk '{print $1}')
+elif command -v md5sum >/dev/null 2>&1; then
+  KEY=$(printf '%s' "$URL" | md5sum | awk '{print $1}')
+else
+  exec "$REAL_WGET" "$@"
+fi
+
+CACHE_FILE="$CACHE_DIR/$KEY"
+TMP_FILE="$(mktemp)"
+
+
+# Absolute output path to guarantee visibility to callers
+OUT_PATH="$(pwd)/$OUT"
+
+# If cached, copy and return
+if [ -f "$CACHE_FILE" ]; then
+  cp -f "$CACHE_FILE" "$OUT_PATH"
+  exit 0
+fi
+
+# Cache miss - log the download attempt
+echo "$(date 2>/dev/null || date)\tURL=$URL\tOUT=$OUT_PATH\tCACHE_FILE=$CACHE_FILE" >> /tmp/wget-wrapper.log 2>/dev/null || true
+# echo "[wget-wrapper] URL=$URL OUT=$OUT_PATH" >&2 || true
+
+# Download into temp file, then atomically move to cache and copy to OUT_PATH
+if "$REAL_WGET" -q -O "$TMP_FILE" "$URL"; then
+  mv "$TMP_FILE" "$CACHE_FILE" || {
+      echo "Failed to move temp file to cache: $TMP_FILE -> $CACHE_FILE" >&2
+      rm -f "$TMP_FILE" || true
+      exit 2
+  }
+  # Ensure write is flushed
+  sync || true
+
+  # Copy to requested output (absolute path) so dpkg sees it
+  cp -f "$CACHE_FILE" "$OUT_PATH" || {
+      echo "Failed to copy cache to output: $CACHE_FILE -> $OUT_PATH" >&2
+      exit 3
+  }
+
+  # Log for debugability: global /tmp log and a local working-dir log + sentinel
+  echo "URL=$URL OUT=$OUT_PATH CACHE=$CACHE_FILE" >> /tmp/wget-wrapper.log || true
+  # write a small local log next to the output so callers can quickly verify
+  if [ -w "$(pwd)" ] 2>/dev/null; then
+      echo "URL=$URL OUT=$(basename "$OUT_PATH") CACHE=$(basename "$CACHE_FILE")" >> "$(pwd)/wget-wrapper.log" || true
+      printf "invoked at %s\n" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$(pwd)/.wget-wrapper-invoked" || true
+  fi
+  echo "[wget-wrapper] URL=$URL OUT=$OUT_PATH" >&2 || true
+
+  # Ensure readable permissions
+  chmod 644 "$OUT_PATH" || true
+
+  exit 0
+else
+  rm -f "$TMP_FILE" || true
+  exec "$REAL_WGET" "$@"
+fi
