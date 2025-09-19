@@ -1,0 +1,3 @@
+[submodule "runner-images-src"]
+	path = runner-images-src
+	url = https://github.com/actions/runner-images.git
