@@ -2,6 +2,10 @@ ARG BASE_IMAGE=base
 
 FROM ubuntu:24.04 AS base
 
+ARG TARGETARCH
+
+LABEL org.opencontainers.image.source=https://github.com/jul-m/gha-runner-compose
+
 ARG IMAGE_VERSION="latest"
 ARG RUNNER_INSTALL_DIR=/opt/actions-runner
 ARG RUNNER_USER=runner
@@ -18,9 +22,8 @@ ENV NONINTERACTIVE=1
 COPY docker-assets/apt.conf.d /imagegeneration/docker-assets/apt.conf.d
 
 # => Enable APT caching + install base build dependencies + create runner user/directories
-RUN --mount=type=cache,target=/var/cache/gha-download-cache \
-    --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt/lists \
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,id=apt-lists-cache-$TARGETARCH,sharing=locked \
     mv /etc/apt/apt.conf.d/docker-clean /imagegeneration/docker-assets/apt.conf.d/docker-clean.bak && \
     ln -s /imagegeneration/docker-assets/apt.conf.d/zz-disable-apt-clean.conf /etc/apt/apt.conf.d/zz-disable-apt-clean.conf && \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -35,9 +38,10 @@ RUN --mount=type=cache,target=/var/cache/gha-download-cache \
 COPY --chmod=777 --chown=root:${RUNNER_USER} docker-assets/from-upstream /imagegeneration
 COPY --chmod=777 --chown=root:${RUNNER_USER} docker-build /imagegeneration/docker-build
 
-RUN --mount=type=cache,target=/var/cache/gha-download-cache \
-    --mount=type=cache,target=/var/lib/apt/lists \
-    --mount=type=cache,target=/var/cache/apt \
+RUN --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cache \
+    --mount=type=cache,target=/var/lib/apt/lists,id=apt-lists-cache-$TARGETARCH,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=locked \
+    --mount=type=secret,id=GITHUB_TOKEN,required=false \
     bash -e "/imagegeneration/docker-build/local-install/install-prereqs.sh" && \
     bash -e "/imagegeneration/docker-build/local-install/clean-restore.sh"
 # clean-restore.sh remove temp file + restore APT config (docker-clean + remove zz-disable-apt-clean.conf)
@@ -55,6 +59,8 @@ USER $RUNNER_USER
 ##################################################
 FROM ${BASE_IMAGE} AS runner-build
 
+ARG TARGETARCH
+
 # Comma separated list of runner components to install (e.g. "docker,containerd").
 # Already installed components in $BASE_IMAGE will be skipped.
 ARG RUNNER_COMPONENTS=""
@@ -65,9 +71,10 @@ ARG APT_PACKAGES=""
 # List of additional PowerShell modules to install (comma separated)
 ARG PWSH_MODULES=""
 
-RUN --mount=type=cache,target=/var/cache/gha-download-cache \
-    --mount=type=cache,target=/var/lib/apt/lists \
-    --mount=type=cache,target=/var/cache/apt \
+RUN --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cache \
+    --mount=type=cache,target=/var/lib/apt/lists,id=apt-lists-cache-$TARGETARCH,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=locked \
+    --mount=type=secret,id=GITHUB_TOKEN,required=false \
     sudo mv /etc/apt/apt.conf.d/docker-clean /imagegeneration/docker-assets/apt.conf.d/docker-clean.bak && \
     sudo ln -s /imagegeneration/docker-assets/apt.conf.d/zz-disable-apt-clean.conf /etc/apt/apt.conf.d/zz-disable-apt-clean.conf && \
     sudo -E RUNNER_COMPONENTS="$RUNNER_COMPONENTS" APT_PACKAGES="$APT_PACKAGES" PWSH_MODULES="$PWSH_MODULES" \

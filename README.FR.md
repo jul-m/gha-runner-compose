@@ -221,6 +221,48 @@ Pour optimiser les builds multiples, vous pouvez utiliser un builder BuildKit d�
     ```
     L'option `--load` est nécessaire pour charger l'image dans le moteur Docker local.
 
+#### Optionnel : augmenter les limites d’API GitHub pendant le build
+
+Certains scripts téléchargent des artefacts depuis GitHub (releases, fichiers `raw`, etc.). Pour éviter les erreurs `403` dues aux limites d’accès anonymes, vous pouvez fournir un jeton GitHub à BuildKit sans qu’il soit conservé dans l’image finale. Les wrappers `curl` et `wget` injectent automatiquement un header `Authorization: Bearer` pour les domaines GitHub si un jeton est disponible.
+
+1. Rendez le jeton accessible à BuildKit : soit via une variable d’environnement, soit via un fichier.
+```bash
+# Option A : variable d’environnement (utilisée par --secret env=...)
+export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxx
+
+# Option B : fichier référencé plus tard
+echo "ghp_xxxxxxxxxxxxxxxxxxxxx" > ~/.config/github-token
+```
+2. Passez le secret lors du build.
+```bash
+docker buildx build \
+    --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \  # avec l’option A
+    --build-arg RUNNER_COMPONENTS=yq,docker,java-tools \
+    --target runner-build -t mon-runner:latest .
+
+# ou avec l’option B
+docker buildx build \
+    --secret id=GITHUB_TOKEN,src=$HOME/.config/github-token \
+    --build-arg RUNNER_COMPONENTS=yq,docker,java-tools \
+    --target runner-build -t mon-runner:latest .
+```
+3. Exemple côté Docker Compose :
+```yaml
+build:
+    context: .
+    target: runner-build
+    secrets:
+        - GITHUB_TOKEN
+secrets:
+    GITHUB_TOKEN:
+        environment: GITHUB_TOKEN  # ou: file: ~/.config/github-token
+```
+
+Rien n’est conservé dans l’image finale : le secret n’existe que le temps de l’exécution de chaque commande `RUN`. Si vous ne fournissez pas de secret, les téléchargements restent anonymes comme auparavant.
+
+> [!NOTE]
+> Les wrappers vérifient à la fois la variable d’environnement `GITHUB_TOKEN` et le fichier `/run/secrets/GITHUB_TOKEN`. Ils n’ajoutent pas le header si vous fournissez déjà une en-tête `Authorization`, ou si l’URL cible n’appartient pas à un domaine GitHub (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`).
+
 ---
 
 ## Fonctionnement du build
@@ -231,16 +273,15 @@ Le pipeline de build s'appuie sur un `Dockerfile` multi-étapes et réutilise le
 
 - **Étapes principales du `Dockerfile` :**
     1. **`base` :**
-        - Copie les scripts upstream et le `toolset.json` dans `/imagegeneration/`.
-        - Prépare l'OS, configure APT et installe les prérequis (runner, PowerShell, dépôts Microsoft) via `local-install/install-prereqs.sh`.
+        - Copie les scripts upstream figés depuis `docker-assets/from-upstream/` vers `/imagegeneration/` et la logique locale depuis `docker-build/` vers `/imagegeneration/docker-build/`.
+        - Active un cache APT pendant le build (désactive temporairement `docker-clean` et lie `zz-disable-apt-clean.conf`), installe les paquets de base, crée l'utilisateur `runner` et les répertoires, puis exécute `local-install/install-prereqs.sh` (installe le runner GitHub Actions, PowerShell, dépôts). Enfin, restaure la configuration APT via `local-install/clean-restore.sh`.
+        - Prépare le démarrage du conteneur : copie `entrypoint.sh`, définit `ENTRYPOINT ["/entrypoint.sh"]`, `USER runner`, et `WORKDIR` sur `${RUNNER_WORKDIR}`.
     2. **`runner-build` :**
-        - Installe les composants listés dans `RUNNER_COMPONENTS` via `local-install/install-components.sh`.
-        - Ce script résout les dépendances et les catégories (`all`, `all-<category>`) définies dans `local-install/components.csv`.
-        - Il enregistre les composants installés dans `/imagegeneration/installed/components.txt` pour éviter les réinstallations.
-    3. **Finalisation :**
-        - Nettoie les artefacts de build.
-        - Copie le script `entrypoint.sh`.
-        - Définit l'utilisateur `runner` et le répertoire de travail (`WORKDIR`).
+        - Hérite de `${BASE_IMAGE}` (par défaut le stage `base`). Il ne recopie pas les sources ; il s'attend à trouver `/imagegeneration/` dans l'image de base.
+        - Réactive l’optimisation de cache APT durant l’installation des composants, exécute `local-install/install-components.sh` piloté par `RUNNER_COMPONENTS` ainsi que les options `APT_PACKAGES` et `PWSH_MODULES`, puis restaure la configuration APT.
+        - Résout les dépendances et catégories (`all`, `all-<category>`) définies dans `local-install/components.csv`, et enregistre les composants installés dans `/imagegeneration/installed/components.txt` pour éviter les réinstallations.
+    3. **Image résultante :**
+        - Le stage `runner-build` est celui qu’il faut taguer/utiliser comme image finale.
 
 - **Logique d'override par composant :**
     - Pour chaque composant `<comp>`, l'orchestrateur cherche d'abord un script local `docker-build/components/<comp>.sh`.
@@ -249,7 +290,7 @@ Le pipeline de build s'appuie sur un `Dockerfile` multi-étapes et réutilise le
 
 - **Wrappers utilitaires (`./docker-build/bin/`) :**
     - `systemctl` : Un faux `systemd` qui redirige les appels vers `service` ou des scripts `init.d`, permettant aux scripts upstream de fonctionner dans un conteneur.
-    - `curl` et `wget` : Wrappers qui mettent en cache les artefacts téléchargés dans `/var/cache/gha-download-cache` (mis en cache par BuildKit), réduisant ainsi les temps de build.
+    - `curl` et `wget` : Wrappers qui mettent en cache les artefacts téléchargés dans `/var/cache/gha-download-cache` (mis en cache par BuildKit), réduisant ainsi les temps de build. Les métadonnées et paquets APT sont également mis en cache via les mounts BuildKit.
 
 ---
 

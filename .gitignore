@@ -4,5 +4,13 @@ tmp/
 
 # Files
 .DS_Store
-*.log
 *.local.*
+*.log
+
+# Archives
+*.zip
+*.tar.gz
+
+# .env files: ignore all except example files
+.env*
+!.env.example*

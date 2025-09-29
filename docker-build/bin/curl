@@ -3,12 +3,68 @@ set -eu
 # Cache-aware curl wrapper (POSIX sh)
 # Only intercepts very simple cases: exactly one URL and either "-o <file>" or "-O".
 # In all other cases, delegates to the real curl.
+#
+# Added: optional GitHub authenticated requests when $GITHUB_TOKEN is set (not logged)
+# This increases rate limits and allows access to private assets during image build.
 
 CACHE_DIR="${GHA_FETCH_CACHE_DIR:-/var/cache/gha-download-cache}"
 mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
 # Debug logging
 echo "[CURL_WRAPPER] Args: $*" >> /tmp/curl-debug.log
+
+# Allow BuildKit secret injection without exporting globally.
+if [ "${GITHUB_TOKEN:-}" = "" ] && [ -f /run/secrets/GITHUB_TOKEN ]; then
+  token_from_secret="$(tr -d '\r\n' < /run/secrets/GITHUB_TOKEN 2>/dev/null || true)"
+  if [ "${token_from_secret:-}" != "" ]; then
+    GITHUB_TOKEN="$token_from_secret"
+  fi
+fi
+
+# Determine if we should inject an Authorization header.
+# Conditions:
+#  - GITHUB_TOKEN env var non-empty
+#  - No existing explicit Authorization header (-H/--header) provided
+#  - At least one URL targets a github* domain where auth can help (github.com, api.github.com,
+#    raw.githubusercontent.com, objects.githubusercontent.com)
+should_add_auth=0
+if [ "${GITHUB_TOKEN:-}" != "" ]; then
+  have_auth_header=0
+  i=1
+  while [ $i -le $# ]; do
+    eval a="\${$i}"
+    case "$a" in
+      -H|--header)
+        i=$((i+1)); eval hval="\${$i:-}"; echo "$hval" | grep -i "^Authorization:" >/dev/null 2>&1 && have_auth_header=1 ;;
+      -H*|--header=*)
+        hv="${a#*=}"; echo "$hv" | grep -i "^Authorization:" >/dev/null 2>&1 && have_auth_header=1 ;;
+    esac
+    i=$((i+1))
+  done
+  if [ $have_auth_header -eq 0 ]; then
+    # Look for a GitHub-like URL in args
+    for candidate in "$@"; do
+      case "$candidate" in
+        https://github.com/*|https://api.github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*)
+          should_add_auth=1; break ;;
+      esac
+    done
+  fi
+fi
+
+AUTH_HEADER=""
+if [ $should_add_auth -eq 1 ]; then
+  AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
+  echo "[CURL_WRAPPER] Auth header injected for GitHub domain" >> /tmp/curl-debug.log
+fi
+
+run_real_curl() {
+  if [ $should_add_auth -eq 1 ]; then
+    "$REAL_CURL" -H "$AUTH_HEADER" "$@"
+  else
+    "$REAL_CURL" "$@"
+  fi
+}
 
 find_real() {
   name="$1"
@@ -99,7 +155,8 @@ done
 
 # Intercept only the simplest safe case: one URL, output specified
 if [ "${URL:-}" = "" ] || [ $NONOPT_COUNT -ne 1 ]; then
-  exec "$REAL_CURL" "$@"
+  run_real_curl "$@"
+  exit $?
 fi
 
 if [ $USE_CAP_O -eq 1 ] && [ "${OUT:-}" = "" ]; then
@@ -142,7 +199,7 @@ if [ $HAS_W -eq 1 ] && [ "${W_VAL}" = "%{http_code}" ]; then
   # Cache miss: run real curl, tee the http code so we can decide to cache
   CODE_FILE="$(mktemp)"
   # Capture stdout (the -w output) to a file, then forward it back to stdout for the caller
-  "${REAL_CURL}" "$@" > "$CODE_FILE"
+  run_real_curl "$@" > "$CODE_FILE"
   CURL_EXIT=$?
   HTTP_CODE=$(cat "$CODE_FILE" 2>/dev/null || true)
   cat "$CODE_FILE"
@@ -160,11 +217,12 @@ if [ -f "$CACHE_FILE" ]; then
   exit 0
 fi
 
-if "$REAL_CURL" -L --fail -sS -o "$TMP_FILE" "$URL"; then
+if run_real_curl -L --fail -sS -o "$TMP_FILE" "$URL"; then
   mv "$TMP_FILE" "$CACHE_FILE"
   cp -f "$CACHE_FILE" "$OUT"
   exit 0
 else
   rm -f "$TMP_FILE"
-  exec "$REAL_CURL" "$@"
+  run_real_curl "$@"
+  exit $?
 fi

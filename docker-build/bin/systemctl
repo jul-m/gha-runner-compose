@@ -30,11 +30,17 @@ handle_service() {
                 else
                     service "$service" "$command"
                 fi
-            elif [ -x "/etc/init.d/$service" ]; then
-                if $QUIET; then
-                    "/etc/init.d/$service" "$command" >/dev/null 2>&1
-                else
-                    "/etc/init.d/$service" "$command"
+
+                # Workaround fox fix apache2 stop under a AMD64 with Rosetta/qemu
+                if [ "$command" = "stop" ] && [ "$service" = "apache2" ]; then
+                    for pidfile in "/var/run/apache2/apache2.pid" "/run/apache2/apache2.pid"; do
+                        if [ -f "$pidfile" ]; then
+                            pid=$(cat "$pidfile" 2>/dev/null || true)
+                            if [ -n "$pid" ]; then
+                                kill -TERM "$pid" >/dev/null 2>&1 || true
+                            fi
+                        fi
+                    done
                 fi
             else
                 echo "Error: Service $service not found or not supported"

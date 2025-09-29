@@ -2,6 +2,8 @@
 set -eu
 # POSIX cache-aware wget wrapper (mirrors curl wrapper behavior)
 # Intercepts only simple cases: single URL and optional -O/-o output. Otherwise delegates.
+#
+# Added: optional GitHub authenticated requests when $GITHUB_TOKEN is set.
 
 
 CACHE_DIR="${GHA_FETCH_CACHE_DIR:-/var/cache/gha-download-cache}"
@@ -25,6 +27,47 @@ find_real() {
 }
 
 REAL_WGET="$(find_real wget)" || { echo "real wget not found" >&2; exit 1; }
+
+# Load GITHUB_TOKEN from BuildKit secret if not already provided.
+if [ "${GITHUB_TOKEN:-}" = "" ] && [ -f /run/secrets/GITHUB_TOKEN ]; then
+  token_from_secret="$(tr -d '\r\n' < /run/secrets/GITHUB_TOKEN 2>/dev/null || true)"
+  if [ "${token_from_secret:-}" != "" ]; then
+    GITHUB_TOKEN="$token_from_secret"
+  fi
+fi
+
+# Decide if we should append an Authorization header (via --header) for GitHub domains.
+should_add_auth=0
+if [ "${GITHUB_TOKEN:-}" != "" ]; then
+  have_auth_header=0
+  for a in "$@"; do
+    case "$a" in
+      --header=*) echo "${a#--header=}" | grep -i "^Authorization:" >/dev/null 2>&1 && have_auth_header=1 ;;
+      -H|--header)
+        have_auth_header=1; break ;;
+    esac
+  done
+  if [ $have_auth_header -eq 0 ]; then
+    for candidate in "$@"; do
+      case "$candidate" in
+        https://github.com/*|https://api.github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*)
+          should_add_auth=1; break ;;
+      esac
+    done
+  fi
+fi
+AUTH_HEADER_VALUE=""
+if [ $should_add_auth -eq 1 ]; then
+  AUTH_HEADER_VALUE="Authorization: Bearer $GITHUB_TOKEN"
+fi
+
+run_real_wget() {
+  if [ $should_add_auth -eq 1 ]; then
+    "$REAL_WGET" --header="$AUTH_HEADER_VALUE" "$@"
+  else
+    "$REAL_WGET" "$@"
+  fi
+}
 
 # Minimal POSIX arg parsing for -O/-o and single URL
 OUT=""
@@ -76,7 +119,8 @@ done
 
 # If not a simple single-URL invocation, delegate
 if [ "${URL:-}" = "" ] || [ $NONOPT_COUNT -ne 1 ]; then
-  exec "$REAL_WGET" "$@"
+  run_real_wget "$@"
+  exit $?
 fi
 
 # If the caller requested output to stdout (OUT='-'), delegate to real wget so
@@ -124,7 +168,7 @@ echo "$(date 2>/dev/null || date)\tURL=$URL\tOUT=$OUT_PATH\tCACHE_FILE=$CACHE_FI
 # echo "[wget-wrapper] URL=$URL OUT=$OUT_PATH" >&2 || true
 
 # Download into temp file, then atomically move to cache and copy to OUT_PATH
-if "$REAL_WGET" -q -O "$TMP_FILE" "$URL"; then
+if run_real_wget -q -O "$TMP_FILE" "$URL"; then
   mv "$TMP_FILE" "$CACHE_FILE" || {
       echo "Failed to move temp file to cache: $TMP_FILE -> $CACHE_FILE" >&2
       rm -f "$TMP_FILE" || true
@@ -154,5 +198,6 @@ if "$REAL_WGET" -q -O "$TMP_FILE" "$URL"; then
   exit 0
 else
   rm -f "$TMP_FILE" || true
-  exec "$REAL_WGET" "$@"
+  run_real_wget "$@"
+  exit $?
 fi
