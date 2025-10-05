@@ -1,0 +1,100 @@
+name: Test Base Image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-start-runner:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+
+      - name: Build base image
+        run: |  # shell
+          # Build base image
+          docker build --target base -t gha-runner-base:test .
+
+      - name: Start runner container
+        run: |  # shell
+          # Get runner registration token
+          TOKEN=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/registration-token | \
+            jq -r .token)
+          
+          # Start runner container in background
+          docker run -d --name test-runner \
+            -e RUNNER_REPO_URL="${{ github.server_url }}/${{ github.repository }}" \
+            -e RUNNER_TOKEN="$TOKEN" \
+            -e RUNNER_NAME="test-runner-${{ github.run_id }}" \
+            -e RUNNER_LABELS="test-base,test-runner-${{ github.run_id }}" \
+            gha-runner-base:test
+
+      - name: Wait for runner registration and execution
+        run: |  # shell
+          # Wait for runner to register (check logs for success)
+          timeout 60 bash -c '
+          until docker logs test-runner 2>&1 | grep -q "Runner registered successfully"; do
+            sleep 5
+          done
+          '
+          
+          # Wait for test-basic-job to complete successfully
+          echo "Waiting for test-basic-job to complete..."
+          timeout 300 bash -c '
+          while true; do
+            JOB_STATUS=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}/jobs" | \
+              jq -r ".jobs[] | select(.name == \"test-basic-job\") | .conclusion")
+            if [ "$JOB_STATUS" = "success" ]; then
+              echo "test-basic-job completed successfully."
+              break
+            elif [ "$JOB_STATUS" = "failure" ] || [ "$JOB_STATUS" = "cancelled" ] || [ "$JOB_STATUS" = "timed_out" ]; then
+              echo "test-basic-job failed with status: $JOB_STATUS"
+              exit 1
+            fi
+            sleep 10
+          done
+          '
+
+      - name: Cleanup runner
+        if: always()
+        run: |  # shell
+          # Get runner registration token again for cleanup
+          TOKEN=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/registration-token | \
+            jq -r .token)
+          
+          # Find and remove the runner
+          RUNNER_ID=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners" | \
+            jq -r ".runners[] | select(.name == \"test-runner-${{ github.run_id }}\") | .id")
+          
+          if [ -n "$RUNNER_ID" ]; then
+            echo "Removing runner with ID: $RUNNER_ID"
+            curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/$RUNNER_ID"
+          else
+            echo "Runner not found, may have been removed already."
+          fi
+          
+          # Stop and remove the Docker container
+          docker stop test-runner || true
+          docker rm test-runner || true
+
+  test-basic-job:
+    runs-on: 'test-runner-${{ github.run_id }}'
+    steps:
+      - name: Run basic test
+        run: |  # shell
+          # Basic job test
+          echo "Hello from self-hosted runner!"
+          echo "Runner is working correctly."
+          uname -a
