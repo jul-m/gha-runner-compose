@@ -1,9 +1,8 @@
 #!/bin/bash -e
-################################################################################
-##  File:  docker-build/install-prereqs.sh
-##  Desc:  Install prerequisites of "gha-runner-compose" image: 
-##         GitHub Actions Runner, pwsh with basic modules
-################################################################################
+########################################################################################################################
+##  File:  docker-build/local-install/install-prereqs.sh
+##  Desc:  Install prerequisites of "gha-runner-compose" image. Runned by Dockerfile.
+########################################################################################################################
 
 # ===== CONFIGURATION ===== #
 set -Eeo pipefail
@@ -30,24 +29,8 @@ source "$LOCAL_INSTALL/helpers.sh"
 source "$HELPER_SCRIPTS/install.sh"
 source "$HELPER_SCRIPTS/etc-environment.sh"
 
-install_runner(){
-    log "Téléchargement du binaire GitHub Actions Runner"
-    local repo="actions/runner"
-    local url_filter="contains(\"linux-${ARCH_SHORT}\") and endswith(\".tar.gz\")"
-    local url=$(resolve_github_release_asset_url "$repo" "$url_filter" "latest" "false" "true")
-    local runner_tmp_tgz=$(download_with_retry "$url")
-    local file_name=$(basename "$runner_tmp_tgz")
-    local checksum=$(get_checksum_from_github_release "$repo" "$file_name <!-- BEGIN SHA" "latest" "SHA256")
-
-    use_checksum_comparison "$runner_tmp_tgz" "$checksum" "256"
-    tar -xzf "$runner_tmp_tgz" -C "$RUNNER_INSTALL_DIR" || fail "Extract runner tarball failed"
-    rm -f "$runner_tmp_tgz"
-    chown -R ${RUNNER_USER}:${RUNNER_USER} "$RUNNER_INSTALL_DIR"
-    log "Runner installé dans $RUNNER_INSTALL_DIR"
-}
-
 install_powershell(){
-    log "Installation PowerShell (tarball GitHub)"
+    log "Installing PowerShell from GitHub archive..."
     local repo="PowerShell/PowerShell"
     local version=$(get_toolset_value ".pwsh.version")
     local url_filter="endswith(\"linux-${ARCH_SHORT}.tar.gz\")"
@@ -65,19 +48,19 @@ install_powershell(){
     chmod +x "$dest_dir/pwsh"
     ln -sf "$dest_dir/pwsh" /usr/bin/pwsh
     rm -f "$pwsh_tmp_tgz"
-    pwsh -v || fail "pwsh non fonctionnel après installation"
-    log "PowerShell installé (pwsh disponible dans /usr/bin/pwsh)"
+    pwsh -v || fail "pwsh not working"
+    log "PowerShell installed (pwsh available in /usr/bin/pwsh)"
 }
 
 install_pwsh_modules(){
-    log "Préparation tests + installation modules PowerShell officiels"
+    log "Preparing tests + installing base PowerShell modules..."
     local script="${LOCAL_INSTALL}/Install-PowerShellModules.ps1"
     if [ ! -f "$script" ]; then
-    log "Script officiel introuvable ($script) -> skip"
+    log "Install-PowerShellModules.ps1 not found ($script) -> skip"
     return 0
     fi
-    # Exécuter le script (installe aussi Pester puis lance les tests PowerShellModules)
-    pwsh -NoLogo -File "$script" || fail "Echec installation modules PowerShell officiels"
+    # Execute the script (also installs Pester and runs PowerShellModules tests)
+    pwsh -NoLogo -File "$script" || fail "Failed to install base PowerShell modules"
 }
 
 run_prerequisites_scripts(){
@@ -86,7 +69,7 @@ run_prerequisites_scripts(){
     # apt package list required for prerequisites scripts
     apt-get update
 
-    # Adapt content of configure-environment.sh for container context
+    # Adapt content of upstream configure-environment.sh for container context
     sed -i 's/^\(.*waagent.*\)$/# \1/g' "$BUILD_SCRIPTS/configure-environment.sh"
     sed -i 's/^\(.*\/etc\/hosts.*\)$/# \1/g' "$BUILD_SCRIPTS/configure-environment.sh"
     sed -i 's/^\(.*sysctl.*\)$/# \1/g' "$BUILD_SCRIPTS/configure-environment.sh"
@@ -118,7 +101,6 @@ if [ -d "$DOCKER_BUILD/bin" ]; then
     log "=> Enabled cache-aware download wrappers (curl/wget) + fake systemctl"
 fi
 
-# install_runner
 install_powershell
 install_pwsh_modules
 run_prerequisites_scripts

@@ -1,7 +1,8 @@
-################################################################################
-##  File:  Install-PowerShellModules.ps1
-##  Desc:  Install modules for PowerShell
-################################################################################
+#!/usr/bin/env pwsh
+########################################################################################################################
+##  File:  docker-build/local-install/Install-PowerShellModules.ps1
+##  Desc:  Installs PowerShell modules in gha-runner-compose builds
+########################################################################################################################
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"

@@ -1,9 +1,7 @@
 #!/bin/bash -e
 ########################################################################################################################
-##  File:  docker-build/install-components.sh
-##  Desc:  Install components listed in $RUNNER_COMPONENTS, with scripts from
-##         $DOCKER_BUILD/components if exist, otherwise from upstream scripts
-##         Now supports categories and 'all' keyword, based on components.csv
+##  File:  docker-build/local-install/install-components.sh
+##  Desc:  Install selected components of "gha-runner-compose" image. Runned by Dockerfile.
 ########################################################################################################################
 
 # ===== CONFIGURATION ===== #

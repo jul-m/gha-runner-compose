@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# helpers.sh - utilitaires shell pour l'image runner
-# Fournit une fonction cleanup pour purger /tmp (avec exceptions) et /var/log
+########################################################################################################################
+##  File:  docker-build/local-install/helpers.sh
+##  Desc:  Helper functions for gha-runner-compose build scripts
+########################################################################################################################
+
 
 IFS=$'\n\t'
 

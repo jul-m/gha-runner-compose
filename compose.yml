@@ -1,16 +1,20 @@
-name: gh-selfhost-runners
+name: gha-runner-compose
 
 services:
   gha-runner1:
+    # List of available pre-built images: see docs/images.md
     image: ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest
     container_name: gha-runner1
     env_file:
+      # .env file containing repo/org url + temporary registration token, optionally runner labels
       - .env
     environment:
       - RUNNER_NAME=gha-runner1
     volumes:
-      - gha-runner1_data:/opt/actions-runner
+      # Volume /opt/actions-runner -> Persist runner install & registration (long term credentials)
+      - gha-runner1_gh-runner:/opt/actions-runner
     # privileged: true  # Enable only if your workflows run Docker inside the runner (DinD)
 
 volumes:
-  gha-runner1_data:
+  # Create one '/opt/actions-runner' volume per runner container
+  gha-runner1_gh-runner:

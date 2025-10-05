@@ -1,4 +1,4 @@
-name: gh-selfhost-runners
+name: gha-runner-compose-build
 
 services:
   gha-runner1:
@@ -6,19 +6,26 @@ services:
       context: .
       target: runner-build
       args:
+        # BASE_IMAGE -> gha-runner-compose image to use as base for build: see docs/images.md
         BASE_IMAGE: ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest
+        # RUNNER_COMPONENTS -> components list to add in BASE_IMAGE: see docs/components.md
         RUNNER_COMPONENTS: yq,docker
-        # APT_PACKAGES: maven
+        # APT_PACKAGES -> additional APT packages to install.
+        #APT_PACKAGES: maven
+        # PWSH_MODULES -> additional PowerShell modules to install from PSGallery.
+        #PWSH_MODULES: Az
     container_name: gha-runner1
     env_file:
+      # .env file containing repo/org url + temporary registration token, optionally runner labels
       - .env
     environment:
+      # RUNNER_NAME -> Name of the runner as registered in GitHub (must be unique per repo/org)
       - RUNNER_NAME=gha-runner1
     volumes:
-      - gha-runner1_data:/opt/actions-runner
+      # Volume /opt/actions-runner -> Persist runner install & registration (long term credentials)
+      - gha-runner1_gh-runner:/opt/actions-runner
     # privileged: true  # Enable only if your workflows run Docker inside the runner (DinD)
 
 volumes:
-  gha-runner1_data:
-
-# Components matrix and arch support: see docs/components.md
+  # Create one '/opt/actions-runner' volume per runner container
+  gha-runner1_gh-runner:

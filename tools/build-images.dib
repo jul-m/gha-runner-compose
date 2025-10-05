@@ -1,0 +1,121 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"csharp","items":[{"name":"csharp","languageName":"C#","aliases":["c#","cs"]},{"name":"fsharp","languageName":"F#","aliases":["f#","fs"]},{"name":"html","languageName":"HTML"},{"name":"http","languageName":"HTTP"},{"name":"javascript","languageName":"JavaScript","aliases":["js"]},{"name":"mermaid","languageName":"Mermaid"},{"name":"pwsh","languageName":"pwsh"},{"name":"value"}]}}
+
+#!markdown
+
+# Build gha-runner-compose Docker images
+## Config (to run before build cells)
+
+#!pwsh
+
+$baseImageName = 'ghcr.io/jul-m/gha-runner-compose-base:u24.04'
+$runnerImageName = 'ghcr.io/jul-m/gha-runner-compose:u24.04'
+$imageTagSuffix = 'latest'
+
+$dockerBuildArgs = [System.Collections.Generic.List[object]]::new()
+$dockerBuildArgs.AddRange(@(
+    '--platform=linux/amd64,linux/arm64'
+    '--progress=quiet'
+    '--sbom=false', '--provenance=false'
+    # '--push'
+    # '--no-cache'
+))
+
+if ($ghToken = Get-Content '.env.build.secret' -ErrorAction SilentlyContinue | 
+    Select-String 'GITHUB_TOKEN\s*=\s*(.*)' | % { $_.Matches[0].Groups[1].Value }
+){
+    $env:GITHUB_TOKEN = $ghToken
+    $dockerBuildArgs.AddRange(('--secret', 'id=GITHUB_TOKEN,env=GITHUB_TOKEN'))
+    Write-Host 'Found GITHUB_TOKEN in .env.build.secret: docker build will use --secret'
+}
+
+$fullBaseImageRef = "$baseImageName-$imageTagSuffix"
+
+Write-Host "Docker Build Args: $dockerBuildArgs"
+Write-Host "Images Names: baseImageName=$baseImageName, runnerImageName=$runnerImageName`n fullBaseImageRef=$fullBaseImageRef"
+Write-Host "Images Tags: imageTagPrefix=$imageTagPrefix, imageTagSuffix=$imageTagSuffix"
+
+#!markdown
+
+## Build: Base Image
+
+#!pwsh
+
+# Build Base Image
+docker buildx build --target base `
+    -t $fullBaseImageRef `
+    @dockerBuildArgs . 2>&1 | Out-String -Stream | Write-Host
+
+#!markdown
+
+## Build: Runner Images
+
+#!pwsh
+
+# Build Runner : essentials
+docker buildx build --target runner-build `
+    --build-arg BASE_IMAGE=$fullBaseImageRef `
+    --build-arg RUNNER_COMPONENTS=all-essentials `
+    -t $runnerImageName-essentials-$imageTagSuffix `
+    @dockerBuildArgs . 2>&1 | Out-String -Stream | Write-Host
+
+#!pwsh
+
+# Categories Images (Based on essentials)
+$categories = @(
+    'nodejs'
+    'cloud'
+    'java',
+    'container'
+    'python'
+    'dotnet'
+    'build'
+)
+
+$categories | ForEach-Object -Parallel {
+    $category = $_
+    Write-Host "Building category: $category"
+    $localDockerBuildArgs = $using:dockerBuildArgs
+    docker buildx build --target runner-build `
+        --build-arg BASE_IMAGE=$runnerImageName-essentials-$imageTagSuffix `
+        --build-arg RUNNER_COMPONENTS=all-$category `
+        -t $using:runnerImageName-$category-$using:imageTagSuffix `
+        @localDockerBuildArgs . 2>&1 | Out-String -Stream | Write-Host
+}
+
+#!pwsh
+
+# Build Runner : medium from build
+docker buildx build --target runner-build `
+    --build-arg BASE_IMAGE=$runnerImageName-build-$imageTagSuffix `
+    --build-arg RUNNER_COMPONENTS=all-cloud,all-nodejs,all-java,all-container,all-python,all-rust `
+    -t $runnerImageName-medium-$imageTagSuffix `
+    @dockerBuildArgs . 2>&1 | Out-String -Stream | Write-Host
+
+#!pwsh
+
+# Build Runner : large from medium
+docker buildx build --target runner-build `
+    --build-arg BASE_IMAGE=$runnerImageName-medium-$imageTagSuffix `
+    --build-arg RUNNER_COMPONENTS=all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases `
+    -t $runnerImageName-large-$imageTagSuffix `
+    @dockerBuildArgs . 2>&1 | Out-String -Stream | Write-Host
+
+#!pwsh
+
+# Build Runner : xlarge from large
+docker buildx build --target runner-build `
+    --build-arg BASE_IMAGE=$runnerImageName-large-$imageTagSuffix `
+    --build-arg RUNNER_COMPONENTS=all-swift,actions-cache,codeql-bundle,firefox,selenium `
+    -t $runnerImageName-xlarge-$imageTagSuffix `
+    @dockerBuildArgs . 2>&1 | Out-String -Stream | Write-Host
+
+#!pwsh
+
+# Build Runner : all from xlarge
+docker buildx build --target runner-build `
+    --build-arg BASE_IMAGE=$runnerImageName-xlarge-$imageTagSuffix `
+    --build-arg RUNNER_COMPONENTS=all `
+    -t $runnerImageName-all-$imageTagSuffix `
+    @dockerBuildArgs . 2>&1 | Out-String -Stream | Write-Host

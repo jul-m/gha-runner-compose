@@ -25,7 +25,7 @@ COPY docker-assets/apt.conf.d /imagegeneration/docker-assets/apt.conf.d
 RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,id=apt-lists-cache-$TARGETARCH,sharing=locked \
     mv /etc/apt/apt.conf.d/docker-clean /imagegeneration/docker-assets/apt.conf.d/docker-clean.bak && \
-    ln -s /imagegeneration/docker-assets/apt.conf.d/zz-disable-apt-clean.conf /etc/apt/apt.conf.d/zz-disable-apt-clean.conf && \
+    ln -s /imagegeneration/docker-assets/apt.conf.d/zz-force-apt-cache.conf /etc/apt/apt.conf.d/zz-force-apt-cache.conf && \
     apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl jq git tar gzip unzip libicu-dev libkrb5-3 libssl-dev libcurl4-openssl-dev procps \
         sudo gnupg lsb-release file wget iptables parallel rsync ssh zip python-is-python3 && \
@@ -44,7 +44,7 @@ RUN --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cach
     --mount=type=secret,id=GITHUB_TOKEN,required=false \
     bash -e "/imagegeneration/docker-build/local-install/install-prereqs.sh" && \
     bash -e "/imagegeneration/docker-build/local-install/clean-restore.sh"
-# clean-restore.sh remove temp file + restore APT config (docker-clean + remove zz-disable-apt-clean.conf)
+# clean-restore.sh remove temp file + restore APT config (docker-clean + remove zz-force-apt-cache.conf)
 
 # => Entrypoint
 COPY docker-assets/entrypoint.sh /entrypoint.sh
@@ -76,8 +76,8 @@ RUN --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cach
     --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=locked \
     --mount=type=secret,id=GITHUB_TOKEN,required=false \
     sudo mv /etc/apt/apt.conf.d/docker-clean /imagegeneration/docker-assets/apt.conf.d/docker-clean.bak && \
-    sudo ln -s /imagegeneration/docker-assets/apt.conf.d/zz-disable-apt-clean.conf /etc/apt/apt.conf.d/zz-disable-apt-clean.conf && \
+    sudo ln -s /imagegeneration/docker-assets/apt.conf.d/zz-force-apt-cache.conf /etc/apt/apt.conf.d/zz-force-apt-cache.conf && \
     sudo -E RUNNER_COMPONENTS="$RUNNER_COMPONENTS" APT_PACKAGES="$APT_PACKAGES" PWSH_MODULES="$PWSH_MODULES" \
         bash -e "/imagegeneration/docker-build/local-install/install-components.sh" && \
     sudo bash -e "/imagegeneration/docker-build/local-install/clean-restore.sh"
-# clean-restore.sh remove temp file + restore APT config (docker-clean + remove zz-disable-apt-clean.conf)
+# clean-restore.sh remove temp file + restore APT config (docker-clean + remove zz-force-apt-cache.conf)

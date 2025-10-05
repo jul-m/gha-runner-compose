@@ -1,6 +1,6 @@
 #!/bin/bash -e
 ########################################################################################################################
-##  File:  local-install/clean-restore.sh
+##  File:  docker-build/local-install/clean-restore.sh
 ##  Desc:  Script to clean /tmp and restore APT configuration after installation
 ########################################################################################################################
 
@@ -46,11 +46,11 @@ restore_apt_config() {
         warn "[restore] Backup file $DOCKER_ASSETS/apt.conf.d/docker-clean.bak not found"
     fi
 
-    # Supprimer le lien symbolique zz-disable-apt-clean.conf
-    if [ -L "/etc/apt/apt.conf.d/zz-disable-apt-clean.conf" ]; then
-        log "[restore] Removing symlink /etc/apt/apt.conf.d/zz-disable-apt-clean.conf..."
-        rm -f "/etc/apt/apt.conf.d/zz-disable-apt-clean.conf" || \
-            fail "Failed to remove zz-disable-apt-clean.conf symlink"
+    # Supprimer le lien symbolique zz-force-apt-cache.conf
+    if [ -L "/etc/apt/apt.conf.d/zz-force-apt-cache.conf" ]; then
+        log "[restore] Removing symlink /etc/apt/apt.conf.d/zz-force-apt-cache.conf..."
+        rm -f "/etc/apt/apt.conf.d/zz-force-apt-cache.conf" || \
+            fail "Failed to remove zz-force-apt-cache.conf symlink"
     fi
 
     log "[restore] APT configuration restoration finished."

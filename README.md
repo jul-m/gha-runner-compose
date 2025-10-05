@@ -25,6 +25,7 @@ Under the hood, this project relies on the same scripts used by `actions/runner-
     - [General Case](#general-case)
     - [Base Image](#base-image)
     - [Advanced Build](#advanced-build)
+      - [Optional: Increase GitHub API Rate Limits During Build](#optional-increase-github-api-rate-limits-during-build)
   - [How the Build Works](#how-the-build-works)
   - [Entrypoint](#entrypoint)
   - [Repository Structure](#repository-structure)
@@ -209,7 +210,7 @@ To optimize multiple builds, you can use a dedicated BuildKit builder that lever
 1.  **Create the dedicated builder:**
     ```bash
     docker buildx create --driver docker-container \
-        --name gha-runner-compose-builder --config ./buildkitd.toml
+        --name gha-runner-compose-builder --config ./tools/buildkitd.toml
     ```
 
 2.  **Launch the build with this builder:**
@@ -274,7 +275,7 @@ The build pipeline relies on a multi-stage `Dockerfile` and reuses the official 
 -   **Main `Dockerfile` stages:**
     1.  **`base`:**
         -   Copies the frozen upstream scripts and assets from `docker-assets/from-upstream/` to `/imagegeneration/`, and local build logic from `docker-build/` to `/imagegeneration/docker-build/`.
-        -   Enables APT caching during build (temporarily disables `docker-clean` and symlinks `zz-disable-apt-clean.conf`), installs base packages, creates the `runner` user and directories, then runs `local-install/install-prereqs.sh` (installs the GitHub Actions runner, PowerShell, repositories). Finally restores APT settings via `local-install/clean-restore.sh`.
+        -   Enables APT caching during build (temporarily disables `docker-clean` and symlinks `zz-force-apt-cache.conf`), installs base packages, creates the `runner` user and directories, then runs `local-install/install-prereqs.sh` (installs the GitHub Actions runner, PowerShell, repositories). Finally restores APT settings via `local-install/clean-restore.sh`.
         -   Sets the container startup: copies `entrypoint.sh`, sets `ENTRYPOINT ["/entrypoint.sh"]`, `USER runner`, and `WORKDIR` to `${RUNNER_WORKDIR}`.
     2.  **`runner-build`:**
         -   Inherits from `${BASE_IMAGE}` (defaults to the `base` stage). It does not re-copy sources; it expects `/imagegeneration/` from the base image.
@@ -309,7 +310,6 @@ The `/entrypoint.sh` script manages the runner's lifecycle in the container:
 
 -   `Dockerfile`: Multi-stage build file.
 -   `compose.*.yml`: Docker Compose files for different use cases.
--   `buildkitd.toml`: BuildKit configuration for build caching.
 -   `docker-assets/`: Files copied into the Docker image.
     -   `entrypoint.sh`: Container startup script.
     -   `from-upstream/`: Frozen copy of scripts and `toolset.json` from `actions/runner-images`.
@@ -319,6 +319,7 @@ The `/entrypoint.sh` script manages the runner's lifecycle in the container:
     -   `bin/`: Wrappers for `systemctl`, `curl`, and `wget`.
 -   `docs/`: Additional documentation (components, images).
 -   `runner-images-src/` (Git submodule): Mirror of the `actions/runner-images` repository, used as a source for upstream scripts.
+-   `tools/`: Tools and resources for development and testing.
 
 ---
 

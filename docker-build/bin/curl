@@ -1,19 +1,15 @@
 #!/bin/sh
+########################################################################################################################
+##  File:  docker-build/bin/curl
+##  Desc:  curl wrapper for gha-runner-compose builds: Adds caching and optional GitHub authentication
+########################################################################################################################
+
 set -eu
-# Cache-aware curl wrapper (POSIX sh)
-# Only intercepts very simple cases: exactly one URL and either "-o <file>" or "-O".
-# In all other cases, delegates to the real curl.
-#
-# Added: optional GitHub authenticated requests when $GITHUB_TOKEN is set (not logged)
-# This increases rate limits and allows access to private assets during image build.
 
 CACHE_DIR="${GHA_FETCH_CACHE_DIR:-/var/cache/gha-download-cache}"
-mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
-# Debug logging
-echo "[CURL_WRAPPER] Args: $*" >> /tmp/curl-debug.log
-
-# Allow BuildKit secret injection without exporting globally.
+# Get GITHUB_TOKEN from env or Docker secret
+# Pull a fallback token from Docker secrets when the environment variable is absent.
 if [ "${GITHUB_TOKEN:-}" = "" ] && [ -f /run/secrets/GITHUB_TOKEN ]; then
   token_from_secret="$(tr -d '\r\n' < /run/secrets/GITHUB_TOKEN 2>/dev/null || true)"
   if [ "${token_from_secret:-}" != "" ]; then
@@ -27,6 +23,7 @@ fi
 #  - No existing explicit Authorization header (-H/--header) provided
 #  - At least one URL targets a github* domain where auth can help (github.com, api.github.com,
 #    raw.githubusercontent.com, objects.githubusercontent.com)
+# Look for safe opportunities to inject an Authorization header automatically.
 should_add_auth=0
 if [ "${GITHUB_TOKEN:-}" != "" ]; then
   have_auth_header=0
@@ -55,9 +52,9 @@ fi
 AUTH_HEADER=""
 if [ $should_add_auth -eq 1 ]; then
   AUTH_HEADER="Authorization: Bearer $GITHUB_TOKEN"
-  echo "[CURL_WRAPPER] Auth header injected for GitHub domain" >> /tmp/curl-debug.log
 fi
 
+# Execute the real curl binary, optionally injecting the Authorization header discovered above.
 run_real_curl() {
   if [ $should_add_auth -eq 1 ]; then
     "$REAL_CURL" -H "$AUTH_HEADER" "$@"
@@ -66,6 +63,7 @@ run_real_curl() {
   fi
 }
 
+# Locate the first real curl binary in PATH that isn't this wrapper.
 find_real() {
   name="$1"
   self="$0"
@@ -83,6 +81,7 @@ find_real() {
   return 1
 }
 
+# Bail out early when we cannot resolve a genuine curl binary.
 REAL_CURL="$(find_real curl)" || { echo "real curl not found" >&2; exit 1; }
 
 # Parse minimal flags in POSIX sh
@@ -95,6 +94,7 @@ W_VAL=""
 EXPECT_OUT=0
 SKIP_NEXT=0
 
+# Minimal positional parser: capture the first URL, output expectations and relevant flags.
 i=1
 while [ $i -le $# ]; do
   eval a="\${$i}"
@@ -153,7 +153,7 @@ while [ $i -le $# ]; do
   i=$((i+1))
 done
 
-# Intercept only the simplest safe case: one URL, output specified
+# Intercept only the simplest safe case: one URL with an explicit output target.
 if [ "${URL:-}" = "" ] || [ $NONOPT_COUNT -ne 1 ]; then
   run_real_curl "$@"
   exit $?
@@ -165,13 +165,10 @@ if [ $USE_CAP_O -eq 1 ] && [ "${OUT:-}" = "" ]; then
 fi
 
 if [ "${OUT:-}" = "" ]; then
-  echo "[CURL_WRAPPER] DELEGATE: OUT empty - stdout behavior" >> /tmp/curl-debug.log
   exec "$REAL_CURL" "$@"
 fi
 
-echo "[CURL_WRAPPER] INTERCEPT: URL='$URL' OUT='$OUT' HAS_W=$HAS_W W_VAL='$W_VAL'" >> /tmp/curl-debug.log
-
-# Compute cache key
+# Compute a stable cache key derived from the requested URL.
 KEY=""
 if command -v sha256sum >/dev/null 2>&1; then
   KEY=$(printf '%s' "$URL" | sha256sum | awk '{print $1}')
@@ -185,6 +182,7 @@ else
 fi
 
 CACHE_FILE="$CACHE_DIR/$KEY"
+# Use a throwaway file to stage the downloaded payload before publishing it to cache/output.
 TMP_FILE="$(mktemp)"
 
 # If caller expects HTTP code via -w, preserve behavior and still cache
@@ -211,7 +209,7 @@ if [ $HAS_W -eq 1 ] && [ "${W_VAL}" = "%{http_code}" ]; then
   exit "$CURL_EXIT"
 fi
 
-# No -w: standard cache flow using our own fetch
+# No -w: standard cache flow using our own fetch helper.
 if [ -f "$CACHE_FILE" ]; then
   cp -f "$CACHE_FILE" "$OUT"
   exit 0

@@ -1,9 +1,8 @@
 #!/bin/bash
-################################################################################
-##  File:  bin/systemctl.sh
+########################################################################################################################
+##  File:  docker-build/bin/systemctl
 ##  Desc:  Fake systemctl script to simulate systemctl commands in Docker containers
-##         Wraps to service command for basic operations
-################################################################################
+########################################################################################################################
 
 # List of services to ignore
 IGNORED_SERVICES=("apt-daily.timer" "apt-daily.service" "apt-daily-upgrade.timer" "apt-daily-upgrade.service")

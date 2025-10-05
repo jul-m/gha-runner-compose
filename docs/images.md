@@ -24,7 +24,7 @@ The table below provides a compact overview of the main pre-built tags, what the
 | `ghcr.io/jul-m/gha-runner-compose:u24.04-xlarge-latest` | large | large + swift, actions-cache, codeql, firefox, selenium | ~9.5 GB / ~35.5 GB | Very large; includes browsers & QA tools |
 | `ghcr.io/jul-m/gha-runner-compose:u24.04-all-latest` | xlarge | everything not in xlarge (all components) | AMD64: ~15.5 GB / ~62 GB<br>ARM64: ~10.5 GB / ~44 GB | Full image; many AMD64-only components present on AMD64 |
 
-For a full component breakdown per category see `docs/components.md`.
+For a full component breakdown per category see [docs/components.md](./components.md).
 
 
 ## Base Image
@@ -127,10 +127,9 @@ Our images are built incrementally, with each layer adding new components on top
   - **Approximate Size for AMD64 version** (compressed/uncompressed): ~15.5 GB / ~62 GB
   - **Approximate Size for ARM64 version** (compressed/uncompressed): ~10.5 GB / ~44 GB
 
----
 
-**Notes:**
+## Notes
 
 - **Components List:** For a detailed list of all available components and their status, see [docs/components.md](./components.md).
-- **`all-<category>` Notation:** A tag like `all-nodejs` or `all-cloud` installs all components belonging to that category. Categories are defined in `docker-build/local-install/components.csv` and documented in `docs/components.md`.
+- **`all-<category>` Notation:** A tag like `all-nodejs` or `all-cloud` installs all components belonging to that category. Categories are defined in [docker-build/local-install/components.csv](../docker-build/local-install/components.csv) and documented in [docs/components.md](./components.md).
 - The Approximate Sizes are provided for informational purposes only and may vary due to several factors (especially between AMD64 and ARM64 versions). The size indicated includes all layers of the image for a single architecture. If you have already pulled other images from this repository with shared layers, the additional space used will be lower. If you pull both the AMD64 and ARM64 versions of the images, the size will be twice as large (no shared layers between the two).
