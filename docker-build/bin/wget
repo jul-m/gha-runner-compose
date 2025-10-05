@@ -38,24 +38,19 @@ if [ "${GITHUB_TOKEN:-}" = "" ] && [ -f /run/secrets/GITHUB_TOKEN ]; then
 fi
 
 # Decide if we should append an Authorization header (via --header) for GitHub domains.
+# Simplified logic: inject token if GITHUB_TOKEN exists and any URL is a GitHub domain.
+# This avoids complex parsing of existing headers which is error-prone in POSIX sh.
 should_add_auth=0
 if [ "${GITHUB_TOKEN:-}" != "" ]; then
-  have_auth_header=0
-  for a in "$@"; do
-    case "$a" in
-      --header=*) echo "${a#--header=}" | grep -i "^Authorization:" >/dev/null 2>&1 && have_auth_header=1 ;;
-      -H|--header)
-        have_auth_header=1; break ;;
+  # Look for a GitHub-like URL in args
+  for candidate in "$@"; do
+    case "$candidate" in
+      https://github.com/*|https://api.github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*)
+        should_add_auth=1
+        break
+        ;;
     esac
   done
-  if [ $have_auth_header -eq 0 ]; then
-    for candidate in "$@"; do
-      case "$candidate" in
-        https://github.com/*|https://api.github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*)
-          should_add_auth=1; break ;;
-      esac
-    done
-  fi
 fi
 AUTH_HEADER_VALUE=""
 if [ $should_add_auth -eq 1 ]; then
@@ -76,11 +71,29 @@ OUT=""
 URL=""
 NONOPT_COUNT=0
 USE_CAP_O=0
+SKIP_NEXT=0
 
 i=1
 while [ $i -le $# ]; do
   eval a="\${$i}"
+  
+  if [ $SKIP_NEXT -eq 1 ]; then
+    SKIP_NEXT=0
+    i=$((i+1))
+    continue
+  fi
+  
   case "$a" in
+    --tries|--waitretry|--connect-timeout)
+      # Options that take a value
+      SKIP_NEXT=1
+      ;;
+    --tries=*|--waitretry=*|--connect-timeout=*)
+      # Options with = sign
+      ;;
+    -q|-Q)
+      # Quiet mode
+      ;;
     -O)
       # -O takes the next arg as output
       i=$((i+1))
@@ -127,7 +140,8 @@ fi
 
 # If the caller requested output to stdout (OUT='-'), delegate so pipe-based flows still work.
 if [ "${OUT:-}" = "-" ]; then
-  exec "$REAL_WGET" "$@"
+  run_real_wget "$@"
+  exit $?
 fi
 
 if [ $USE_CAP_O -eq 1 ] && [ "${OUT:-}" = "" ]; then
@@ -148,7 +162,8 @@ elif command -v shasum >/dev/null 2>&1; then
 elif command -v md5sum >/dev/null 2>&1; then
   KEY=$(printf '%s' "$URL" | md5sum | awk '{print $1}')
 else
-  exec "$REAL_WGET" "$@"
+  run_real_wget "$@"
+  exit $?
 fi
 
 CACHE_FILE="$CACHE_DIR/$KEY"
@@ -156,8 +171,14 @@ CACHE_FILE="$CACHE_DIR/$KEY"
 TMP_FILE="$(mktemp)"
 
 
-# Absolute output path to guarantee visibility to callers even within subshells.
-OUT_PATH="$(pwd)/$OUT"
+# Handle absolute vs relative output paths
+if [ "${OUT#/}" != "$OUT" ]; then
+  # Already absolute (starts with /)
+  OUT_PATH="$OUT"
+else
+  # Relative path, make it absolute
+  OUT_PATH="$(pwd)/$OUT"
+fi
 
 # If cached, copy the artifact and exit quickly.
 if [ -f "$CACHE_FILE" ]; then

@@ -6,23 +6,23 @@ All images are published for both AMD64 and ARM64 using the same image tags via 
 
 ## Quick reference — available images
 
-The table below provides a compact overview of the main pre-built tags, what they are based on, a short content summary and approximate sizes. Use the `Name with tag` column to pull or reference the image directly.
+The table below provides a compact overview of the main pre-built tags, what they are based on, a short content summary and approximate sizes. Use the `Full Reference` column to pull or reference the image directly.
 
-| Name with tag | Based on | Short contents | Approx. size (compressed / uncompressed) | Notes |
-|---|---|---|---|---|
-| `ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest` | ubuntu:24.04 (base stage) | Minimal prerequisites, `runner` user, entrypoint | ~300 MB / ~1.25 GB | Use as `BASE_IMAGE` for custom builds |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest` | base | `all-essentials` (git, github-cli, yq, nodejs-lite, runner-package...) | ~800 MB / ~2.75 GB | Good starting point for most use-cases |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-nodejs-latest` | essentials | `all-nodejs` | TBD | Thematic image for Node.js tooling |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-cloud-latest` | essentials | `all-cloud` (aws, azure, gcloud CLIs, etc.) | TBD | Cloud CLIs and tools |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-java-latest` | essentials | `all-java` | TBD | Java toolchains and SDKs |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-container-latest` | essentials | `all-container` | TBD | Docker/containers tooling |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-python-latest` | essentials | `all-python` | TBD | Python runtimes & tooling |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-dotnet-latest` | essentials | `all-dotnet` | TBD | .NET SDKs and tooling |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-build-latest` | essentials (+nodejs) | `all-build` (build tools, compilers) | ~2.25 GB / ~8.75 GB | For heavy build workloads |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-medium-latest` | build | Aggregated: cloud, nodejs, java, container, python, rust | ~5 GB / ~20 GB | Mid-size image for common stacks |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-large-latest` | medium | medium + dotnet, php, ruby, R, Julia, web & DB tools | ~7.25 GB / ~29 GB | Large aggregate image |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-xlarge-latest` | large | large + swift, actions-cache, codeql, firefox, selenium | ~9.5 GB / ~35.5 GB | Very large; includes browsers & QA tools |
-| `ghcr.io/jul-m/gha-runner-compose:u24.04-all-latest` | xlarge | everything not in xlarge (all components) | AMD64: ~15.5 GB / ~62 GB<br>ARM64: ~10.5 GB / ~44 GB | Full image; many AMD64-only components present on AMD64 |
+| Short Name | Full Reference | Based on | Short contents | Approx. size (compressed / uncompressed) | Notes |
+|---|---|---|---|---|---|
+| **base** | `ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest` | ubuntu:24.04 (base stage) | Minimal prerequisites, `runner` user, entrypoint | ~300 MB / ~1.25 GB | Use as `BASE_IMAGE` for custom builds |
+| **essentials** | `ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest` | base | `all-essentials` (git, github-cli, yq, nodejs-lite, runner-package...) | ~800 MB / ~2.75 GB | Small image with basic tools |
+| **nodejs** | `ghcr.io/jul-m/gha-runner-compose:u24.04-nodejs-latest` | essentials | `all-nodejs` | ~1 GB / ~4 GB | Thematic image for Node.js tooling |
+| **cloud** | `ghcr.io/jul-m/gha-runner-compose:u24.04-cloud-latest` | essentials | `all-cloud` (aws, azure, gcloud CLIs, etc.) | ~1.5 GB / ~6.5 GB | Cloud CLIs and tools |
+| **java** | `ghcr.io/jul-m/gha-runner-compose:u24.04-java-latest` | essentials | `all-java` | ~2 GB / ~6 GB | Java toolchains and SDKs |
+| **container** | `ghcr.io/jul-m/gha-runner-compose:u24.04-container-latest` | essentials | `all-container` | ~1.25 GB / ~4 GB | Docker/containers tooling |
+| **python** | `ghcr.io/jul-m/gha-runner-compose:u24.04-python-latest` | essentials | `all-python` | ~1.25 GB / ~4.75 GB | Python runtimes & tooling |
+| **dotnet** | `ghcr.io/jul-m/gha-runner-compose:u24.04-dotnet-latest` | essentials | `all-dotnet` | ~2.25 GB / ~8 GB | .NET SDKs and tooling |
+| **build** | `ghcr.io/jul-m/gha-runner-compose:u24.04-build-latest` | essentials | `all-build` (build tools, compilers) | ~2.25 GB / ~8.75 GB | For heavy build workloads |
+| **medium** | `ghcr.io/jul-m/gha-runner-compose:u24.04-medium-latest` | build | Aggregated: cloud, nodejs, java, container, python, rust | ~5 GB / ~20 GB | Mid-size image for common stacks |
+| **large** | `ghcr.io/jul-m/gha-runner-compose:u24.04-large-latest` | medium | medium + dotnet, php, ruby, R, Julia, web & DB tools | ~7.25 GB / ~29 GB | Large aggregate image |
+| **xlarge** | `ghcr.io/jul-m/gha-runner-compose:u24.04-xlarge-latest` | large | large + swift, actions-cache, codeql, firefox, selenium | ~9.5 GB / ~35.5 GB | Very large; includes browsers & QA tools |
+| **all** | `ghcr.io/jul-m/gha-runner-compose:u24.04-all-latest` | xlarge | everything not in xlarge (all components) | AMD64: ~15.5 GB / ~62 GB<br>ARM64: ~10.5 GB / ~44 GB | Full image; many AMD64-only components present on AMD64 |
 
 For a full component breakdown per category see [docs/components.md](./components.md).
 
@@ -34,7 +34,7 @@ The `base` image serves as the foundation for all other runner images.
 - **Source**: Built from the `base` stage in the Dockerfile, using `ubuntu:24.04` as its parent.
 - **Contents**: Includes installation sources, prerequisite packages, the `runner` user setup, and the entrypoint script.
 - **Usage**: It can be used as a standalone GitHub Actions runner, but it only contains the essential prerequisites, with no additional components.
-- **Naming**: `ghcr.io/jul-m/gha-runner-compose-base:u24.04-<date>`, where `<date>` is the release date (e.g., `240919`). The `latest` tag always points to the most recent build.
+- **Naming**: `ghcr.io/jul-m/gha-runner-compose-base:u24.04-<date>`, where `<date>` is the release date in `ddmmyy` format (e.g., `250919`). The `latest` tag always points to the most recent build.
 - **Build Argument**: Use this as the `BASE_IMAGE` value when building a custom image from scratch.
 
 **Key Information:**
@@ -47,13 +47,14 @@ The `base` image serves as the foundation for all other runner images.
 
 Runner images are built on top of the `base` image and include various sets of components.
 
-The images follow this naming convention: `ghcr.io/jul-m/gha-runner-compose:u24.04-<type>-latest`, where:
+The images follow this naming convention: `ghcr.io/jul-m/gha-runner-compose:u24.04-<type>-<date>`, where:
 - `u24.04`: Indicates the base Ubuntu version.
 - `<type>`: Defines the image content and size. It can be one of the following:
   - `essentials`: The base image plus components from the `essentials` category.
   - Thematic images (e.g., `nodejs`, `cloud`, `java`): Built on `essentials` and include all components of a specific category.
   - Sized images (`medium`, `large`, `xlarge`): Incrementally built images that aggregate multiple component categories.
   - `all`: An image containing all available components.
+- `<date>`: The build date in `ddmmyy` format (e.g., `250923`), matching with the base image. The `latest` tag always points to the most recent build.
 
 ### Layered Build Strategy
 
@@ -78,27 +79,27 @@ Our images are built incrementally, with each layer adding new components on top
 - **NodesJS**:
   - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-nodejs-latest`
   - **Content**: `all-nodejs`
-  - **Approximate Size** (compressed/uncompressed): (Size TBD)
+  - **Approximate Size** (compressed/uncompressed): ~1GB / ~4 GB
 - **Cloud**:
   - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-cloud-latest`
   - **Content**: `all-cloud`
-  - **Approximate Size** (compressed/uncompressed): (Size TBD)
+  - **Approximate Size** (compressed/uncompressed): ~1.5GB / ~6.5 GB
 - **Java**:
   - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-java-latest`
   - **Content**: `all-java`
-  - **Approximate Size** (compressed/uncompressed): (Size TBD)
+  - **Approximate Size** (compressed/uncompressed): ~2GB / ~6 GB
 - **Container**:
   - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-container-latest`
   - **Content**: `all-container`
-  - **Approximate Size** (compressed/uncompressed): (Size TBD)
+  - **Approximate Size** (compressed/uncompressed): ~1.25 GB / ~4 GB
 - **Python**:
   - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-python-latest`
   - **Content**: `all-python`
-  - **Approximate Size** (compressed/uncompressed): (Size TBD)
+  - **Approximate Size** (compressed/uncompressed): ~1.25 GB / ~4.75 GB
 - **DotNet**:
   - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-dotnet-latest`
   - **Content**: `all-dotnet`
-  - **Approximate Size** (compressed/uncompressed): (Size TBD)
+  - **Approximate Size** (compressed/uncompressed): ~2.25 GB / ~8 GB
 - **Build Tools**:
   - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-build-latest`
   - **Content**: `all-build` (plus `nodejs` as a dependency).

@@ -354,12 +354,12 @@ process_component() {
     if [ -f "$local_script" ]; then
         # If "local" script exists for component, use it
         log "=> Installing component '${name}' via local script $(basename "$local_script")"
-        sh -c "$local_script" || fail "Local install failed for component '${name}'"
+        bash -eo pipefail "$local_script" || fail "Local install failed for component '${name}'"
         log "✓ Component '${name}' installed via local script"
     elif [ -f "$build_script" ]; then
         # Elif "upstream" script exists for component, use it
         log "=> Installing component '${name}' via upstream script $(basename "$build_script")"
-        sh -c "$build_script" || fail "Upstream install failed for component '${name}'"
+        bash -eo pipefail "$build_script" || fail "Upstream install failed for component '${name}'"
         log "✓ Component '${name}' installed via upstream script"
     else
         # Else, no script found, error out

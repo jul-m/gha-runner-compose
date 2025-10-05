@@ -18,35 +18,19 @@ if [ "${GITHUB_TOKEN:-}" = "" ] && [ -f /run/secrets/GITHUB_TOKEN ]; then
 fi
 
 # Determine if we should inject an Authorization header.
-# Conditions:
-#  - GITHUB_TOKEN env var non-empty
-#  - No existing explicit Authorization header (-H/--header) provided
-#  - At least one URL targets a github* domain where auth can help (github.com, api.github.com,
-#    raw.githubusercontent.com, objects.githubusercontent.com)
-# Look for safe opportunities to inject an Authorization header automatically.
+# Simplified logic: inject token if GITHUB_TOKEN exists and any URL is a GitHub domain.
+# This avoids complex parsing of existing headers which is error-prone in POSIX sh.
 should_add_auth=0
 if [ "${GITHUB_TOKEN:-}" != "" ]; then
-  have_auth_header=0
-  i=1
-  while [ $i -le $# ]; do
-    eval a="\${$i}"
-    case "$a" in
-      -H|--header)
-        i=$((i+1)); eval hval="\${$i:-}"; echo "$hval" | grep -i "^Authorization:" >/dev/null 2>&1 && have_auth_header=1 ;;
-      -H*|--header=*)
-        hv="${a#*=}"; echo "$hv" | grep -i "^Authorization:" >/dev/null 2>&1 && have_auth_header=1 ;;
+  # Look for a GitHub-like URL in args
+  for candidate in "$@"; do
+    case "$candidate" in
+      https://github.com/*|https://api.github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*)
+        should_add_auth=1
+        break
+        ;;
     esac
-    i=$((i+1))
   done
-  if [ $have_auth_header -eq 0 ]; then
-    # Look for a GitHub-like URL in args
-    for candidate in "$@"; do
-      case "$candidate" in
-        https://github.com/*|https://api.github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*)
-          should_add_auth=1; break ;;
-      esac
-    done
-  fi
 fi
 
 AUTH_HEADER=""
@@ -106,16 +90,23 @@ while [ $i -le $# ]; do
   fi
   
   case "$a" in
-    --proto|--tlsv1.2|--proto=*|--tlsv1.2=*|--progress-bar|--silent|--location|--fail|--show-error)
+    --proto|--tlsv1.2|--proto=*|--tlsv1.2=*|--progress-bar|--silent|--location|--fail|--show-error|--create-dirs|--retry|--retry-delay|--connect-timeout)
       # Skip curl protocol/TLS options and other standard options
       if [ "${a#*=}" = "$a" ]; then
-        # No = in argument, value is next argument (only for some options)
+        # No = in argument, value is next argument (only for some options that take values)
         case "$a" in
-          --proto|--tlsv1.2)
+          --proto|--tlsv1.2|--retry|--retry-delay|--connect-timeout)
             SKIP_NEXT=1
             ;;
         esac
       fi
+      ;;
+    --retry=*|--retry-delay=*|--connect-timeout=*|--create-dirs)
+      # Options with = or no argument
+      ;;
+    -[fsSLk]*)
+      # Common combined short options: -f, -s, -S, -L, -k and combinations like -sSL, -fsSL
+      # These don't take arguments
       ;;
     -o|--output)
       i=$((i+1))
@@ -165,7 +156,8 @@ if [ $USE_CAP_O -eq 1 ] && [ "${OUT:-}" = "" ]; then
 fi
 
 if [ "${OUT:-}" = "" ]; then
-  exec "$REAL_CURL" "$@"
+  run_real_curl "$@"
+  exit $?
 fi
 
 # Compute a stable cache key derived from the requested URL.
@@ -178,7 +170,8 @@ elif command -v md5sum >/dev/null 2>&1; then
   KEY=$(printf '%s' "$URL" | md5sum | awk '{print $1}')
 else
   # No hash tool, delegate
-  exec "$REAL_CURL" "$@"
+  run_real_curl "$@"
+  exit $?
 fi
 
 CACHE_FILE="$CACHE_DIR/$KEY"
