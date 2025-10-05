@@ -3,7 +3,7 @@ name: Update Runner Images Sources
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # Run daily at midnight UTC
+    - cron: '0 12 * * *'  # Run daily
 
 permissions:
   contents: write
@@ -56,7 +56,8 @@ jobs:
           # Copy toolset
           cp runner-images-src/images/ubuntu/toolsets/toolset-2404.json docker-assets/from-upstream/toolset.json
 
-          submodule_ref=$(git rev-parse HEAD:runner-images-src)
+          submodule_ref=$(git rev-parse --short :runner-images-src)
+          echo "submodule_ref=$submodule_ref" >> $GITHUB_OUTPUT
 
           # Check if docker-assets/from-upstream has changes
           if git diff --quiet -- docker-assets/from-upstream; then
@@ -83,5 +84,5 @@ jobs:
         run: |  # shell
           # Commit and push submodule update
           git add runner-images-src
-          git commit -m "Update runner-images-src submodule"
+          git commit -m "[auto] Update runner-images-src submodule to ${{ steps.copy_sources.outputs.submodule_ref }}"
           git push
