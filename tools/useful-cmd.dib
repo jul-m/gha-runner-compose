@@ -1,0 +1,28 @@
+#!meta
+
+{"kernelInfo":{"defaultKernelName":"pwsh","items":[{"name":"csharp","languageName":"C#","aliases":["c#","cs"]},{"name":"fsharp","languageName":"F#","aliases":["f#","fs"]},{"name":"html","languageName":"HTML"},{"name":"http","languageName":"HTTP"},{"name":"javascript","languageName":"JavaScript","aliases":["js"]},{"name":"mermaid","languageName":"Mermaid"},{"name":"pwsh","languageName":"pwsh"},{"name":"value"}]}}
+
+#!pwsh
+
+# Docker: Show images sizes
+docker images --tree
+
+#!pwsh
+
+# Docker: Show disk usage
+docker system df -v
+
+#!pwsh
+
+# Docker: Clean cache but keep cache mounts
+docker buildx prune --filter 'type=regular' -f
+
+#!pwsh
+
+# Docker: Clean all cache
+docker buildx prune --all -f
+
+#!pwsh
+
+# Git: auto-update submodule
+git config submodule.recurse true
