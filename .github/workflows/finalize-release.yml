@@ -1,0 +1,206 @@
+name: Finalize Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to finalize (empty=latest prerelease)'
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  BASE_IMG_NAME: gha-runner-compose-base:u24.04
+  RUNNER_IMG_NAME: gha-runner-compose:u24.04
+  TAG: ${{ inputs.tag }}
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-tags: true
+          fetch-depth: 0
+
+      - name: Setup environment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # Login to GHCR and determine tag
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          
+          if [ -z "${{ inputs.tag }}" ]; then
+            TAG=$(gh release list --limit 1 --json tagName,isPrerelease | jq -r '.[] | select(.isPrerelease == true) | .tagName')
+            if [ -z "$TAG" ]; then
+              echo "No prerelease found to finalize"
+              exit 1
+            fi
+            echo "Using latest prerelease: $TAG"
+          else
+            TAG="${{ inputs.tag }}"
+          fi
+
+          # Get the commit of the runner-images submodule for this tag
+          REMOTE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          git remote set-url origin "$REMOTE_URL"
+          git fetch origin refs/tags/$TAG
+          SUBMODULE_COMMIT=$(git ls-tree refs/tags/$TAG runner-images-src | awk '{print $3}')
+          echo "Submodule commit for runner-images-src at tag $TAG: $SUBMODULE_COMMIT"
+          echo "SUBMODULE_COMMIT=$SUBMODULE_COMMIT" >> $GITHUB_ENV
+
+          # Get release date from tag and repo link
+          year="20${TAG:0:2}"
+          month="${TAG:2:2}"
+          day="${TAG:4:2}"
+          RELEASE_DATE="$day/$month/$year"
+          REPO_LINK="https://github.com/$GITHUB_REPOSITORY/tree/$TAG"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "RELEASE_DATE=$RELEASE_DATE" >> $GITHUB_ENV
+          echo "REPO_LINK=$REPO_LINK" >> $GITHUB_ENV
+
+      - name: Check images exist
+        run: |  # shell
+          # Check all images exist and are multi-arch (amd64 and arm64)
+          # Read CSV and check each image
+          tail -n +2 tools/prebuilt-images.csv | while IFS=',' read -r short base components; do
+            if [ "$short" = "base" ]; then
+              IMAGE="$REGISTRY/$BASE_IMG_NAME-$TAG"
+            else
+              IMAGE="$REGISTRY/$RUNNER_IMG_NAME-$short-$TAG"
+            fi
+            echo "🔍 Checking $IMAGE"
+            if ! docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+              echo "❌ Image $IMAGE does not exist"
+              exit 1
+            fi
+            # Check for multi-arch: amd64 and arm64
+            ARCHS=$(docker manifest inspect "$IMAGE" | jq -r '.manifests[] | .platform.architecture' | sort | uniq)
+            if ! echo "$ARCHS" | grep -q "amd64" || ! echo "$ARCHS" | grep -q "arm64"; then
+              echo "❌ Image $IMAGE is not multi-arch (missing amd64 or arm64): $ARCHS"
+              exit 1
+            fi
+            ARCHS_STR=$(echo "$ARCHS" | tr '\n' ' ' | sed 's/ $//')
+            echo "✅ Image $IMAGE is multi-arch: $ARCHS_STR"
+          done
+
+      - name: Tag images with latest
+        run: |  # shell
+          # Tag all images with latest
+          tail -n +2 tools/prebuilt-images.csv | while IFS=',' read -r short base components; do
+            if [ "$short" = "base" ]; then
+              SRC="$REGISTRY/$BASE_IMG_NAME-$TAG"
+              DST="$REGISTRY/$BASE_IMG_NAME-latest"
+            else
+              SRC="$REGISTRY/$RUNNER_IMG_NAME-$short-$TAG"
+              DST="$REGISTRY/$RUNNER_IMG_NAME-$short-latest"
+            fi
+            echo "Tagging $SRC as $DST"
+            docker buildx imagetools create "$SRC" --tag "$DST"
+          done
+
+      - name: Generate release notes
+        uses: actions/github-script@v7
+        id: generate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          script: |  # javascript
+            const fs = require('fs');
+            const tag = process.env.TAG;
+            const releaseDate = process.env.RELEASE_DATE;
+            const repoLink = process.env.REPO_LINK;
+            const registry = process.env.REGISTRY;
+            const baseName = process.env.BASE_IMG_NAME;
+            const runnerName = process.env.RUNNER_IMG_NAME;
+            const submoduleCommit = process.env.SUBMODULE_COMMIT;
+            
+            let notes = `## Release ${tag}\n\n`
+            notes += `- **Release Date:** ${releaseDate}\n`
+            notes += `- **Sources Files of release:** ${repoLink}\n`
+            notes += `- **Documentation of available prebuilt images:** ${repoLink}/docs/images.md\n`
+            notes += `- **Documentation of components:** ${repoLink}/docs/components.md\n`
+            notes += `- **Link to version of runner-images used for ${tag}:** https://github.com/actions/runner-images/tree/${submoduleCommit}\n\n`
+
+            const csv = fs.readFileSync('tools/prebuilt-images.csv','utf8');
+            const lines = csv.split('\n').slice(1).filter(Boolean);
+
+            // get package tag -> html_url map via gh api
+            let packagesByTag = {};
+            try {
+              const { execSync } = require('child_process');
+              const headers = "-H \"Accept: application/vnd.github+json\" -H \"X-GitHub-Api-Version: 2022-11-28\" --paginate";
+              const jq = 'reduce .[] as $item ({}; ' +
+                'reduce ($item.metadata.container.tags[]) as $tag (.; ' +
+                '($tag | split("-") | .[0:2] | join("-")) as $image | ' +
+                '.[$image] = ((.[$image] // {}) + { ($tag | split("-") | .[2:] | join("-")) : $item.html_url })' +
+                ')' +
+                ')';
+              
+              const getPackageTags = (packageName) => {
+                const cmd = `gh api "/user/packages/container/${packageName}/versions" ${headers} --jq '${jq}'`;
+                const out = execSync(cmd, { encoding: 'utf8', env: Object.assign({}, process.env, { GH_TOKEN: process.env.GITHUB_TOKEN }) }).trim();
+                return out ? JSON.parse(out) : {};
+              };
+              
+              const mainTags = getPackageTags('gha-runner-compose');
+              const baseTags = getPackageTags('gha-runner-compose-base');
+              packagesByTag = Object.assign(mainTags, baseTags);
+            } catch (e) { /* ignore, fallback to registry url */ }
+
+            const prefix = (baseName.split(':')[1] || runnerName.split(':')[1] || '');
+
+            // Base Image
+            notes += `## Base Image\n`
+            const baseLine = lines.find(line => line.startsWith('base,'));
+            if (baseLine) {
+              const [short] = baseLine.split(',');
+              const img_ref = `${registry}/${baseName}-${tag}`;
+              const baseTags = packagesByTag['u24.04-latest'];
+              const htmlUrl = baseTags?.[tag] || baseTags?.['latest'] || `https://${img_ref}`;
+              const fullTag = `u24.04-${tag}`;
+              notes += `- [${img_ref}](${htmlUrl}?tag=${fullTag})\n`;
+            }
+
+            // Runner Images
+            notes += `\n## Runner Images\n`
+            for (const line of lines) {
+              const [short] = line.split(',');
+              if (short !== 'base') {
+                const imageKey = `${prefix}-${short}`;
+                const tags = packagesByTag[imageKey];
+                if (tags) {
+                  for (const [tagSuffix, htmlUrl] of Object.entries(tags)) {
+                    if (tagSuffix !== 'latest') {
+                      const fullTag = `${imageKey}-${tagSuffix}`;
+                      const img_ref = `${registry}/${runnerName}-${short}-${tagSuffix}`;
+                      notes += `- [${img_ref}](${htmlUrl}?tag=${fullTag})\n`;
+                    }
+                  }
+                } else {
+                  // fallback
+                  const img_ref = `${registry}/${runnerName}-${short}-${tag}`;
+                  const key = `${imageKey}-${tag}`;
+                  const htmlUrl = `https://${img_ref}?tag=${key}`;
+                  notes += `- [${img_ref}](${htmlUrl})\n`;
+                }
+              }
+            }
+
+            core.setOutput('notes', notes);
+
+      - name: Finalize GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # Update release
+          gh release edit $TAG --latest --prerelease=false --title "$TAG ($RELEASE_DATE)" \
+            --notes "${{ steps.generate.outputs.notes }}"
+
+          echo "✅ Successfully finalized release $TAG"

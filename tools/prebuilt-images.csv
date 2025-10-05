@@ -1,0 +1,14 @@
+Short Name,Base Image,Components List
+base,ubuntu:24.04,
+essentials,base,all-essentials
+nodejs,essentials,all-nodejs
+cloud,essentials,all-cloud
+java,essentials,all-java
+container,essentials,all-container
+python,essentials,all-python
+dotnet,essentials,all-dotnet
+build,essentials,all-build
+medium,build,all-cloud|all-nodejs|all-java|all-container|all-python|all-rust
+large,medium,all-dotnet|all-php|all-ruby|all-r|all-julia|pipx-packages|all-web|all-databases
+xlarge,large,all-swift|actions-cache|codeql-bundle|firefox|selenium
+all,xlarge,all

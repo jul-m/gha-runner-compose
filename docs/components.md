@@ -20,20 +20,20 @@ This document lists the components that can be enabled in the Docker image via t
 | `cmake` | ARM64 | `build` | [Kitware/CMake](https://github.com/Kitware/CMake) | `medium+`, `build` |  |  |  |
 | `codeql-bundle` | No | `other` | [github/codeql-action](https://github.com/github/codeql-action) | `xlarge+` |  | ⚠️ | Build ARM64 OK but packages appears targeted at AMD64, no post-install tests → needs tests on ARM64 |
 | `container-tools` | Docker | `container` | [containers/podman](https://github.com/containers/podman), [containers/buildah](https://github.com/containers/buildah), [containers/skopeo](https://github.com/containers/skopeo) | `medium+`, `container` |  | ❌ | Enabled only for x64, can maybe adapted for ARM64 later. Override script disable tests, Docker not available on image build. |
-| `docker` | Docker, ARM64 | `container` | [docker/cli](https://github.com/docker/cli), [docker/buildx](https://github.com/docker/buildx), [docker/compose](https://github.com/docker/compose) | `medium+`, `container` |  |  |  |
+| `docker` | Docker, ARM64 | `container` | [docker/cli](https://github.com/docker/cli), [docker/buildx](https://github.com/docker/buildx), [docker/compose](https://github.com/docker/compose) | `medium+`, `container` | ✅ |  |  |
 | `dotnetcore-sdk` | No | `dotnet` | .NET SDKs (versions in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `large+`, `dotnet` |  |  |  |
 | `firefox` | ARM64 | `browser` | [mozilla/geckodriver](https://github.com/mozilla/geckodriver), [ppa:mozillateam/ppa](https://launchpad.net/~mozillateam/+archive/ubuntu/ppa) | `xlarge+` |  |  |  |
 | `gcc-compilers` | No | `build` | GCC/G++ toolchains | `medium+`, `build` |  |  |  |
 | `gfortran` | No | `build` | GFortran toolchains | `medium+`, `build` |  |  |  |
 | `git-lfs` | No | `essentials,system` | [git-lfs/git-lfs](https://github.com/git-lfs/git-lfs) | `essentials+` |  |  |  |
-| `git` | No | `essentials,system` | Git + git-ftp ([ppa:git-core/ppa](https://launchpad.net/~git-core/+archive/ubuntu/ppa)) | `essentials+` |  |  |  |
-| `github-cli` | ARM64 | `essentials,system` | GitHub CLI ([cli/cli](https://github.com/cli/cli)) | `essentials+` |  |  |  |
+| `git` | No | `essentials,system` | Git + git-ftp ([ppa:git-core/ppa](https://launchpad.net/~git-core/+archive/ubuntu/ppa)) | `essentials+` | ✅ | ✅ |  |
+| `github-cli` | ARM64 | `essentials,system` | GitHub CLI ([cli/cli](https://github.com/cli/cli)) | `essentials+` | ✅ | ✅ |  |
 | `google-chrome` | No | `browser` | Chrome + chromedriver | `all` |  | ❌ | Chrome not available on Linux ARM64 (override for install Chromium on ARM64 can maybe be added) |
 | `google-cloud-cli` | No | `cloud` | Google Cloud SDK (gcloud) | `medium+`, `cloud` |  |  |  |
 | `haskell` | No | `haskell` | [haskell/ghcup-hs](https://github.com/haskell/ghcup-hs) | `all` |  |  |  |
 | `heroku` | No | `cloud` | [heroku/cli](https://github.com/heroku/cli) | `medium+`, `cloud` |  |  |  |
 | `homebrew` | Install as non-root | `system` | [Homebrew/brew](https://github.com/Homebrew/brew) | `all` |  |  |  |
-| `java-tools` | ARM64 | `java` | Temurin JDKs 8/11/17/21 ([Adoptium](https://adoptium.net/)) + [Maven 3.9.11](https://maven.apache.org/) + [Gradle](https://gradle.org/) + [Ant](https://ant.apache.org/) | `medium+`, `java` |  | ✅ |  |
+| `java-tools` | ARM64 | `java` | Temurin JDKs 8/11/17/21 ([Adoptium](https://adoptium.net/)) + [Maven 3.9.11](https://maven.apache.org/) + [Gradle](https://gradle.org/) + [Ant](https://ant.apache.org/) | `medium+`, `java` | ✅ | ✅ |  |
 | `julia` | ARM64 | `julia` | [JuliaLang/julia](https://github.com/JuliaLang/julia) | `large+` |  |  |  |
 | `kotlin` | No | `java` | [JetBrains/kotlin](https://github.com/JetBrains/kotlin) | `medium+`, `java` |  |  | Requires `java-tools` |
 | `kubernetes-tools` | ARM64 | `container` | [kubernetes/kubectl](https://github.com/kubernetes/kubectl), [helm/helm](https://github.com/helm/helm), [kubernetes/minikube](https://github.com/kubernetes/minikube), [kubernetes-sigs/kind](https://github.com/kubernetes-sigs/kind), [kubernetes-sigs/kustomize](https://github.com/kubernetes-sigs/kustomize) | `medium+`, `container` |  |  |  |
@@ -44,8 +44,8 @@ This document lists the components that can be enabled in the Docker image via t
 | `mysql` | No | `databases` | MySQL server + client ([mysql/mysql-server](https://github.com/mysql/mysql-server)) | `large+` |  |  |  |
 | `nginx` | No | `web` | Nginx web server ([nginx/nginx](https://github.com/nginx/nginx)) | `large+` |  |  |  |
 | `ninja` | ARM64 | `build` | [ninja-build/ninja](https://github.com/ninja-build/ninja) | `medium+`, `build` |  |  | Requires `cmake` |
-| `nodejs` | No | `nodejs` | Node.js LTS + npm tools (list in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `medium+`, `nodejs`, `build` |  | ✅ |  |
-| `nodejs-lite` | *Lite Version* | `lite,essentials` | Lite version of `nodejs` (Install node without modules) | `essentials+` |  | ✅ | Ignored if `nodejs` installed |
+| `nodejs` | No | `nodejs` | Node.js LTS + npm tools (list in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `medium+`, `nodejs`, `build` | ✅ | ✅ |  |
+| `nodejs-lite` | *Lite Version* | `lite,essentials` | Lite version of `nodejs` (Install node without modules) | `essentials+` | ✅ | ✅ | Ignored if `nodejs` installed |
 | `nvm` | No | `nodejs` | Node Version Manager [nvm-sh/nvm](https://github.com/nvm-sh/nvm) | `medium+`, `nodejs` |  |  |  |
 | `oc-cli` | No | `cloud` | OpenShift Command Line [openshift/oc](https://github.com/openshift/oc) | `medium+`, `cloud` |  |  |  |
 | `oras-cli` | ARM64 | `cloud` | OCI registry client [oras-project/oras](https://github.com/oras-project/oras) | `medium+`, `cloud` |  |  |  |
@@ -54,18 +54,18 @@ This document lists the components that can be enabled in the Docker image via t
 | `pipx-packages` | No | `other` | Python tools installed by pipx (list in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `large+` |  |  | Requires `python` |
 | `postgresql` | No | `databases` | PostgreSQL server + libpq-dev | `large+` |  |  |  |
 | `powershell` | *Skip install* | `prerequs` | PowerShell 7 (pwsh) | `base+` | ✅ | ✅ | Already installed in prereqs phase |
-| `pulumi` | ARM64 | `cloud` | [pulumi/pulumi](https://github.com/pulumi/pulumi)  IaC | `medium+`, `cloud` |  | ✅ |  |
+| `pulumi` | ARM64 | `cloud` | [pulumi/pulumi](https://github.com/pulumi/pulumi)  IaC | `medium+`, `cloud` | ✅ | ✅ |  |
 | `pypy` | ARM64 | `python` | PyPy runtimes (versions in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `medium+`, `python` |  |  |  |
-| `python` | No | `python` | Python3 + pip + pipx | `medium+`, `python` |  | ✅ |  |
+| `python` | No | `python` | Python3 + pip + pipx | `medium+`, `python` | ✅ | ✅ |  |
 | `rlang` | No | `r` | R Statistical Computing Language [r-project.org](https://r-project.org/) | `large+` |  |  |  |
 | `ruby` | No | `ruby` | [ruby/ruby-builder](https://github.com/ruby/ruby-builder) | `large+` |  |  |  |
-| `runner-package` | ARM64 | `essentials,system` | Caching [actions/runner](https://github.com/actions/runner) archive | `essentials+` |  | ✅ | Package extracted by `entrypoint.sh` to `$RUNNER_INSTALL_DIR` if executed in self-hosted runner context |
+| `runner-package` | ARM64 | `essentials,system` | Caching [actions/runner](https://github.com/actions/runner) archive | `essentials+` | ✅ | ✅ | Package extracted by `entrypoint.sh` to `$RUNNER_INSTALL_DIR` if executed in self-hosted runner context |
 | `rust` | No | `rust` | [rust-lang/rustup](https://github.com/rust-lang/rustup) + cargo | `medium+` |  |  |  |
 | `sbt` | No | `java` | [sbt/sbt](https://github.com/sbt/sbt) build tool for Scala & Java | `medium+`, `java` |  |  |  |
 | `selenium` | No | `browser` | [SeleniumHQ/selenium](https://github.com/SeleniumHQ/selenium) browser automation framework | `xlarge+` |  |  | Requires `java-tools` |
 | `swift` | ARM64 | `swift` | [apple/swift](https://github.com/apple/swift) Programming Language | `xlarge+` |  |  |  |
 | `vcpkg` | No | `build` | [microsoft/vcpkg](https://github.com/microsoft/vcpkg) C++ Library Manager | `medium+`, `build` |  |  |  |
-| `yq` | ARM64 | `essentials` | [mikefarah/yq](https://github.com/mikefarah/yq) YAML, JSON and + processor | `essentials+` |  | ✅ |  |
+| `yq` | ARM64 | `essentials` | [mikefarah/yq](https://github.com/mikefarah/yq) YAML, JSON and + processor | `essentials+` | ✅ | ✅ |  |
 | `zstd` | No | `essentials` | [facebook/zstd](https://github.com/facebook/zstd) Fast real-time compression algorithm | `essentials+` |  |  |  |
 
 

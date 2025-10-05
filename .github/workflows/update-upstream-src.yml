@@ -1,4 +1,5 @@
-name: Update Runner Images Sources
+name: Update Upstream Sources
+run-name: "Update Upstream Sources - ${{ github.event_name }} - #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
@@ -14,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: true
 
@@ -70,7 +71,7 @@ jobs:
 
       - name: Create or update pull request
         if: steps.copy_sources.outputs.modified == 'true'
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: update-runner-images
