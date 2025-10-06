@@ -3,7 +3,7 @@
 
 This document lists the components that can be enabled in the Docker image via the `RUNNER_COMPONENTS` build argument, along with their compatibility and integration status.
 
-| Component Name | Override | Categories | Content | Prebuilt Image | x86_64 | ARM64 | Notes |
+| <ins>Component Name</ins> | <ins>Override</ins> | <ins>Categories</ins> | <ins>Content</ins> | <ins>Prebuilt Image</ins> | <ins>x86_64</ins> | <ins>ARM64</ins> | <ins>Notes</ins> |
 | --- | --- | --- | --- | --- | :---: | :---: | --- |
 | `actions-cache` | No | `other` | [actions/action-versions](https://github.com/actions/action-versions) | `xlarge+` |  |  |  |
 | `android-sdk` | No | `other` | Android SDK + NDK | `all` |  | ❌ | Not available on Linux ARM64 |
@@ -20,6 +20,7 @@ This document lists the components that can be enabled in the Docker image via t
 | `cmake` | ARM64 | `build` | [Kitware/CMake](https://github.com/Kitware/CMake) | `medium+`, `build` |  |  |  |
 | `codeql-bundle` | No | `other` | [github/codeql-action](https://github.com/github/codeql-action) | `xlarge+` |  | ⚠️ | Build ARM64 OK but packages appears targeted at AMD64, no post-install tests → needs tests on ARM64 |
 | `container-tools` | Docker | `container` | [containers/podman](https://github.com/containers/podman), [containers/buildah](https://github.com/containers/buildah), [containers/skopeo](https://github.com/containers/skopeo) | `medium+`, `container` |  | ❌ | Enabled only for x64, can maybe adapted for ARM64 later. Override script disable tests, Docker not available on image build. |
+| <ins>**Component Name**</ins> | <ins>**Override**</ins> | <ins>**Categories**</ins> | <ins>**Content**</ins> | <ins>**Prebuilt Image**</ins> | <ins>**x86_64**</ins> | <ins>**ARM64**</ins> | <ins>**Notes**</ins> |
 | `docker` | Docker, ARM64 | `container` | [docker/cli](https://github.com/docker/cli), [docker/buildx](https://github.com/docker/buildx), [docker/compose](https://github.com/docker/compose) | `medium+`, `container` | ✅ |  |  |
 | `dotnetcore-sdk` | No | `dotnet` | .NET SDKs (versions in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `large+`, `dotnet` |  |  |  |
 | `firefox` | ARM64 | `browser` | [mozilla/geckodriver](https://github.com/mozilla/geckodriver), [ppa:mozillateam/ppa](https://launchpad.net/~mozillateam/+archive/ubuntu/ppa) | `xlarge+` |  |  |  |
@@ -33,8 +34,9 @@ This document lists the components that can be enabled in the Docker image via t
 | `haskell` | No | `haskell` | [haskell/ghcup-hs](https://github.com/haskell/ghcup-hs) | `all` |  |  |  |
 | `heroku` | No | `cloud` | [heroku/cli](https://github.com/heroku/cli) | `medium+`, `cloud` |  |  |  |
 | `homebrew` | Install as non-root | `system` | [Homebrew/brew](https://github.com/Homebrew/brew) | `all` |  |  |  |
-| `java-tools` | ARM64 | `java` | Temurin JDKs 8/11/17/21 ([Adoptium](https://adoptium.net/)) + [Maven 3.9.11](https://maven.apache.org/) + [Gradle](https://gradle.org/) + [Ant](https://ant.apache.org/) | `medium+`, `java` | ✅ | ✅ |  |
+| `java-tools` | ARM64 | `java` | Temurin JDKs 8/11/17/21 ([Adoptium](https://adoptium.net/)) + [Maven](https://maven.apache.org/) + [Gradle](https://gradle.org/) + [Ant](https://ant.apache.org/) | `medium+`, `java` | ✅ | ✅ |  |
 | `julia` | ARM64 | `julia` | [JuliaLang/julia](https://github.com/JuliaLang/julia) | `large+` |  |  |  |
+| <ins>**Component Name**</ins> | <ins>**Override**</ins> | <ins>**Categories**</ins> | <ins>**Content**</ins> | <ins>**Prebuilt Image**</ins> | <ins>**x86_64**</ins> | <ins>**ARM64**</ins> | <ins>**Notes**</ins> |
 | `kotlin` | No | `java` | [JetBrains/kotlin](https://github.com/JetBrains/kotlin) | `medium+`, `java` |  |  | Requires `java-tools` |
 | `kubernetes-tools` | ARM64 | `container` | [kubernetes/kubectl](https://github.com/kubernetes/kubectl), [helm/helm](https://github.com/helm/helm), [kubernetes/minikube](https://github.com/kubernetes/minikube), [kubernetes-sigs/kind](https://github.com/kubernetes-sigs/kind), [kubernetes-sigs/kustomize](https://github.com/kubernetes-sigs/kustomize) | `medium+`, `container` |  |  |  |
 | `leiningen` | No | `java` | [technomancy/leiningen](https://github.com/technomancy/leiningen) | `medium+`, `java` |  |  | Requires `java-tools` |
@@ -50,6 +52,7 @@ This document lists the components that can be enabled in the Docker image via t
 | `oc-cli` | No | `cloud` | OpenShift Command Line [openshift/oc](https://github.com/openshift/oc) | `medium+`, `cloud` |  |  |  |
 | `oras-cli` | ARM64 | `cloud` | OCI registry client [oras-project/oras](https://github.com/oras-project/oras) | `medium+`, `cloud` |  |  |  |
 | `packer` | ARM64 | `build` | [hashicorp/packer](https://github.com/hashicorp/packer) image builder | `medium+`, `build` |  |  |  |
+| <ins>**Component Name**</ins> | <ins>**Override**</ins> | <ins>**Categories**</ins> | <ins>**Content**</ins> | <ins>**Prebuilt Image**</ins> | <ins>**x86_64**</ins> | <ins>**ARM64**</ins> | <ins>**Notes**</ins> |
 | `php` | No | `php` | PHP + [Composer](https://getcomposer.org/) + [PHPUnit](https://phpunit.de/) | `large+` |  |  |  |
 | `pipx-packages` | No | `other` | Python tools installed by pipx (list in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `large+` |  |  | Requires `python` |
 | `postgresql` | No | `databases` | PostgreSQL server + libpq-dev | `large+` |  |  |  |
@@ -67,6 +70,7 @@ This document lists the components that can be enabled in the Docker image via t
 | `vcpkg` | No | `build` | [microsoft/vcpkg](https://github.com/microsoft/vcpkg) C++ Library Manager | `medium+`, `build` |  |  |  |
 | `yq` | ARM64 | `essentials` | [mikefarah/yq](https://github.com/mikefarah/yq) YAML, JSON and + processor | `essentials+` | ✅ | ✅ |  |
 | `zstd` | No | `essentials` | [facebook/zstd](https://github.com/facebook/zstd) Fast real-time compression algorithm | `essentials+` |  |  |  |
+| <ins>**Component Name**</ins> | <ins>**Override**</ins> | <ins>**Categories**</ins> | <ins>**Content**</ins> | <ins>**Prebuilt Image**</ins> | <ins>**x86_64**</ins> | <ins>**ARM64**</ins> | <ins>**Notes**</ins> |
 
 
 **Legend**:
@@ -75,13 +79,13 @@ This document lists the components that can be enabled in the Docker image via t
   - `No`: No override script is used. The upstream script is executed as-is.
   - `ARM64`: The override script adapts the installation for the ARM64 architecture.
   - `Docker`: The override script adapts the installation for a containerized environment.
-  - `Skip install`: The component is already installed during the prerequisites phase (`prereqs`) and is skipped during the component installation phase.
-- **Categories**: Functional categories associated with the component. This allows for grouped installations (e.g., `all-cloud`). See the [Categories List](#categories-list) for more details.
-- **Prebuilt Image**: Specifies the smallest prebuilt image that includes this component. The `+` indicates that larger images also include it. The size order is: `base` < `essentials` < `medium` < `large` < `xlarge` < `all`. Category names (e.g., `cloud`) denote availability in thematic images. See [docs/images.md](./images.md) for more information.
+  - `Skip install`: The component is already installed during the prerequisites phase (`prereqs`) and is skipped if specified `RUNNER_COMPONENTS`.
+- **Categories**: Functional categorie(s) associated with the component. This allows for grouped installations (e.g., `all-cloud`). See the [Categories List](#categories-list) for more details.
+- **Prebuilt Image**: Specifies the smallest prebuilt image that includes this component. The `+` indicates that larger images also include it. The size order is: `base` < `essentials` < `medium` < `large` < `xlarge` < `all`. Category names (e.g., `cloud`) denote availability in thematic images in addition. See [docs/images.md](./images.md) for more information.
 - **x86_64 / ARM64**: Component availability and testing status (in real workflows) by hardware architecture:
   - ✅ : Supported.
   - ❌ : Not supported or not available.
-  - ⚠️ : Warning, see Notes column for details.
+  - ⚠️ : Warning, see `Notes` column for details.
   - *Empty* : No test result reported in this architecture for now.
 
 ## Categories List
@@ -110,4 +114,8 @@ List of categories and their associated components (sorted alphabetically) :
 
 > [!TIP]
 > Add `all-<category>` to `RUNNER_COMPONENTS` to install all components in that category.
-For example, `all-cloud` will install `aws-tools`, `azcopy`, `azure-cli`, and all other components from the `cloud` category.
+For example, `all-java` will install `java-tools`, `kotlin`, `leiningen` and `sbt`.
+
+
+## Components and categories declaration
+All components and their associated categories are declared in the [docker-build/local-install/components.csv](../docker-build/local-install/components.csv) file.

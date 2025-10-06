@@ -180,7 +180,7 @@ jobs:
                     if (tagSuffix !== 'latest') {
                       const fullTag = `${imageKey}-${tagSuffix}`;
                       const img_ref = `${registry}/${runnerName}-${short}-${tagSuffix}`;
-                      notes += `- [${img_ref}](${htmlUrl}?tag=${fullTag})\n`;
+                      notes += `- **${short}:** [${img_ref}](${htmlUrl}?tag=${fullTag})\n`;
                     }
                   }
                 } else {
@@ -188,7 +188,7 @@ jobs:
                   const img_ref = `${registry}/${runnerName}-${short}-${tag}`;
                   const key = `${imageKey}-${tag}`;
                   const htmlUrl = `https://${img_ref}?tag=${key}`;
-                  notes += `- [${img_ref}](${htmlUrl})\n`;
+                  notes += `- **${short}:** [${img_ref}](${htmlUrl})\n`;
                 }
               }
             }
