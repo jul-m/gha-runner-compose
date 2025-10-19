@@ -6,9 +6,9 @@ on:
 jobs:
   build-and-start-runner:
     runs-on: ubuntu-latest
-    permissions: write-all
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    permissions:
+      contents: read
+      actions: write
 
     steps:
       - name: Checkout code
@@ -36,6 +36,8 @@ jobs:
           docker image inspect gha-runner-base:test --format='{{json .}}' | jq '.RepoTags, .Size'
 
       - name: Start runner container
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
         run: |  # shell
           # Get runner registration token
           TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
@@ -50,6 +52,8 @@ jobs:
         continue-on-error: true
 
       - name: Wait for runner registration and execution
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
           # Wait for runner to register (check logs for success)
           timeout 60 bash -c '
@@ -78,6 +82,8 @@ jobs:
 
       - name: Cleanup runner
         if: always()
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
         run: |  # shell
           # Cleanup runner
           docker stop test-runner || true
