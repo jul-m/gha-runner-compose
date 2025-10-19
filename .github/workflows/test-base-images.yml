@@ -32,7 +32,7 @@ jobs:
           build-target: base
           runner-suffix: ${{ format('base-{0}', matrix.arch) }}
           test-job-name: ${{ format('Test Container Runner (base / {0})', matrix.arch) }}
-          github-token: ${{ github.ACTION_GH_TOKEN }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
 
   test-base:
     name: Test Container Runner (base / ${{ matrix.arch }})
@@ -81,7 +81,7 @@ jobs:
           runner-suffix: ${{ format('essentials-{0}', matrix.arch) }}
           runner-components: all-essentials
           test-job-name: ${{ format('Test Container Runner (essentials / {0})', matrix.arch) }}
-          github-token: ${{ github.ACTION_GH_TOKEN }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
 
   test-essentials:
     name: Test Container Runner (essentials / ${{ matrix.arch }})
