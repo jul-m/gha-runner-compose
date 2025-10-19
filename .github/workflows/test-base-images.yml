@@ -8,7 +8,7 @@ on:
 
 jobs:
   test-base-runner:
-    name: Build and Start Runner Container (base / ${{ matrix.arch }})
+    name: Build+Start Runner (base / ${{ matrix.arch }})
     runs-on: ${{ matrix.host-runner }}
     strategy:
       fail-fast: false
@@ -31,11 +31,11 @@ jobs:
           image-tag: gha-runner-base:test
           build-target: base
           runner-suffix: ${{ format('base-{0}', matrix.arch) }}
-          test-job-name: ${{ format('Test Container Runner (base / {0})', matrix.arch) }}
+          test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
 
   test-base:
-    name: Test Container Runner (base / ${{ matrix.arch }})
+    name: Test Runner (base / ${{ matrix.arch }})
     runs-on: ${{ format('test-runner-base-{0}-{1}', matrix.arch, github.run_id) }}
     strategy:
       fail-fast: false
@@ -52,7 +52,7 @@ jobs:
           uname -a
 
   test-essentials-runner:
-    name: Build and Start Runner Container (essentials / ${{ matrix.arch }})
+    name: Build+Start Runner (essentials / ${{ matrix.arch }})
     needs:
       - test-base-runner
       - test-base
@@ -79,11 +79,11 @@ jobs:
           build-target: runner-build
           runner-suffix: ${{ format('essentials-{0}', matrix.arch) }}
           runner-components: all-essentials
-          test-job-name: ${{ format('Test Container Runner (essentials / {0})', matrix.arch) }}
+          test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
 
   test-essentials:
-    name: Test Container Runner (essentials / ${{ matrix.arch }})
+    name: Test Runner (essentials / ${{ matrix.arch }})
     needs:
       - test-base-runner
       - test-base

@@ -188,3 +188,32 @@ runs:
         else
           echo "Runner ${RUNNER_NAME} not found or already removed."
         fi
+
+    - name: Cancel workflow if dependent job is still waiting
+      if: failure()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |  # shell
+        # Cancel workflow when the dependent job is still waiting for a runner
+        set -euo pipefail
+
+        JOB_JSON=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+          --jq ".jobs[] | select(.name == \"${{ inputs.test-job-name }}\")") || true
+
+        if [[ -z "${JOB_JSON}" ]]; then
+          echo "ℹ️ Dependent job '${{ inputs.test-job-name }}' not found; skipping workflow cancellation."
+          exit 1
+        fi
+
+        JOB_STATUS=$(jq -r '.status // ""' <<<"${JOB_JSON}")
+        JOB_CONCLUSION=$(jq -r '.conclusion // ""' <<<"${JOB_JSON}")
+
+        if [[ "${JOB_STATUS}" == "queued" || "${JOB_STATUS}" == "in_progress" ]] && [[ -z "${JOB_CONCLUSION}" ]]; then
+          echo "❌ Dependent job '${{ inputs.test-job-name }}' still ${JOB_STATUS}; cancelling workflow ${GITHUB_RUN_ID}."
+          gh run cancel "${GITHUB_RUN_ID}" || true
+        else
+          echo "ℹ️ Dependent job '${{ inputs.test-job-name }}' status='${JOB_STATUS}' conclusion='${JOB_CONCLUSION}'; skipping workflow cancellation."
+        fi
+
+        exit 1
