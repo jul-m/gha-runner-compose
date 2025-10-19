@@ -29,6 +29,8 @@ jobs:
           load: true
           target: base
           tags: gha-runner-base:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Start runner container
         run: |  # shell
