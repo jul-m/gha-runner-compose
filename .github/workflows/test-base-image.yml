@@ -49,26 +49,38 @@ jobs:
             -e RUNNER_NAME="test-runner-${{ github.run_id }}" \
             -e RUNNER_LABELS="test-base,test-runner-${{ github.run_id }}" \
             gha-runner-base:test
-        continue-on-error: true
 
       - name: Wait for runner registration and execution
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
           # Wait for runner to register (check logs for success)
-          timeout 60 bash -c '
-          until docker logs test-runner 2>&1 | grep -q "Runner registered successfully"; do
-            sleep 5
+          counter=0
+          while true; do
+            LOGS=$(docker logs test-runner 2>&1)
+            if echo "$LOGS" | grep "Listening for Jobs"; then
+              echo "Runner registered successfully."
+              break
+            fi
+
+            counter=$((counter + 1))
+            if [ $counter -ge 30 ]; then
+              echo "Timeout waiting for runner to register."
+              echo "Runner logs:"
+              echo "$LOGS"
+              exit 1
+            fi
+
+            sleep 10
           done
-          '
           
           # Wait for test-basic-job to complete successfully
           echo "Waiting for test-basic-job to complete..."
-          timeout 300 bash -c '
+          counter=0
           while true; do
-            JOB_STATUS=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}/jobs" | \
-              jq -r ".jobs[] | select(.name == \"test-basic-job\") | .conclusion")
+            JOB_STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+              --jq ".jobs[] | select(.name == \"test-basic-job\") | .conclusion")
+
             if [ "$JOB_STATUS" = "success" ]; then
               echo "test-basic-job completed successfully."
               break
@@ -76,9 +88,15 @@ jobs:
               echo "test-basic-job failed with status: $JOB_STATUS"
               exit 1
             fi
+
+            counter=$((counter + 1))
+            if [ $counter -ge 30 ]; then
+              echo "Timeout waiting for test-basic-job to complete."
+              exit 1
+            fi
+
             sleep 10
           done
-          '
 
       - name: Cleanup runner
         if: always()
