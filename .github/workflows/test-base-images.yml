@@ -23,6 +23,9 @@ jobs:
       actions: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
       - name: Test base image (${{ matrix.arch-suffix }})
         uses: ./.github/actions/test-runner-image
         with:
