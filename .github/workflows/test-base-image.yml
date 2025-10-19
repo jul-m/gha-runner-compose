@@ -23,12 +23,12 @@ jobs:
           docker build --target base -t gha-runner-base:test .
 
       - name: Start runner container
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
           # Get runner registration token
-          TOKEN=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-            https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/registration-token | \
-            jq -r .token)
-          
+          TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
+
           # Start runner container in background
           docker run -d --name test-runner \
             -e RUNNER_REPO_URL="${{ github.server_url }}/${{ github.repository }}" \
@@ -67,27 +67,19 @@ jobs:
       - name: Cleanup runner
         if: always()
         run: |  # shell
-          # Get runner registration token again for cleanup
-          TOKEN=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
-            https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/registration-token | \
-            jq -r .token)
-          
-          # Find and remove the runner
-          RUNNER_ID=$(curl -s -H "Authorization: Bearer $TOKEN" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners" | \
-            jq -r ".runners[] | select(.name == \"test-runner-${{ github.run_id }}\") | .id")
+          # Cleanup runner
+          docker stop test-runner || true
+          docker rm test-runner || true
+
+          RUNNER_ID=$(gh api "repos/${{ github.repository }}/actions/runners" \
+            --jq ".runners[] | select(.name == \"test-runner-${{ github.run_id }}\") | .id")
           
           if [ -n "$RUNNER_ID" ]; then
             echo "Removing runner with ID: $RUNNER_ID"
-            curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runners/$RUNNER_ID"
+            gh api --method DELETE "repos/${{ github.repository }}/actions/runners/$RUNNER_ID"
           else
             echo "Runner not found, may have been removed already."
           fi
-          
-          # Stop and remove the Docker container
-          docker stop test-runner || true
-          docker rm test-runner || true
 
   test-basic-job:
     runs-on: 'test-runner-${{ github.run_id }}'
