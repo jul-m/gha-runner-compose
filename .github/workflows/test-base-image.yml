@@ -9,6 +9,8 @@ jobs:
     permissions:
       contents: read
       actions: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -17,14 +19,28 @@ jobs:
       - name: Set up Docker
         uses: docker/setup-docker-action@v4
 
-      - name: Build base image
-        run: |  # shell
-          # Build base image
-          docker build --target base -t gha-runner-base:test .
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build base image (with cache)
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          builder: default
+          load: true
+          target: base
+          tags: gha-runner-base:test
+          cache-from: type=local,src=.buildx-cache
+          cache-to: type=local,dest=.buildx-cache,mode=max
+
+      - name: Upload build cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildx-cache
+          path: .buildx-cache
 
       - name: Start runner container
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
           # Get runner registration token
           TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
