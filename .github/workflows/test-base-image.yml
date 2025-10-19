@@ -54,18 +54,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
-          # Wait for runner to register (check logs for success)
+          # Wait for runner registration and execution
           counter=0
           while true; do
+            echo "Wait runner registration message in container logs..."
+
+            # Check if container is still running
+            if ! docker ps --format '{{.Names}}' | grep -q '^test-runner$'; then
+              echo "❌ Runner container has stopped unexpectedly."
+              echo "Runner logs:"
+              docker logs test-runner 2>&1
+              exit 1
+            fi
+
             LOGS=$(docker logs test-runner 2>&1)
             if echo "$LOGS" | grep "Listening for Jobs"; then
-              echo "Runner registered successfully."
+              echo "✅ Runner registered successfully."
               break
             fi
 
             counter=$((counter + 1))
             if [ $counter -ge 30 ]; then
-              echo "Timeout waiting for runner to register."
+              echo "❌ Timeout waiting for runner to register."
               echo "Runner logs:"
               echo "$LOGS"
               exit 1
@@ -80,18 +90,19 @@ jobs:
           while true; do
             JOB_STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
               --jq ".jobs[] | select(.name == \"test-basic-job\") | .conclusion")
+            echo "Current test-basic-job status: $JOB_STATUS"
 
             if [ "$JOB_STATUS" = "success" ]; then
-              echo "test-basic-job completed successfully."
+              echo "✅ test-basic-job completed successfully."
               break
             elif [ "$JOB_STATUS" = "failure" ] || [ "$JOB_STATUS" = "cancelled" ] || [ "$JOB_STATUS" = "timed_out" ]; then
-              echo "test-basic-job failed with status: $JOB_STATUS"
+              echo "❌ test-basic-job failed with status: $JOB_STATUS"
               exit 1
             fi
 
             counter=$((counter + 1))
             if [ $counter -ge 30 ]; then
-              echo "Timeout waiting for test-basic-job to complete."
+              echo "❌ Timeout waiting for test-basic-job to complete."
               exit 1
             fi
 
