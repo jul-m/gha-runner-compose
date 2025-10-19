@@ -7,6 +7,7 @@ on:
     types: [synchronize, opened, reopened, edited]
 
 jobs:
+  # TEST BASE IMAGE
   test-base-runner:
     name: Build+Start Runner (base / ${{ matrix.arch }})
     runs-on: ${{ matrix.host-runner }}
@@ -28,7 +29,7 @@ jobs:
       - name: Validate base image (${{ matrix.arch }})
         uses: ./.github/actions/test-runner-image
         with:
-          image-tag: gha-runner-base:test
+          image-tag: gha-runner-compose-base:test
           build-target: base
           runner-suffix: ${{ format('base-{0}', matrix.arch) }}
           test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
@@ -51,6 +52,7 @@ jobs:
           echo "Runner is working correctly."
           uname -a
 
+  # TEST ESSENTIALS IMAGE
   test-essentials-runner:
     name: Build+Start Runner (essentials / ${{ matrix.arch }})
     needs:
@@ -75,7 +77,7 @@ jobs:
       - name: Validate essentials image (${{ matrix.arch }})
         uses: ./.github/actions/test-runner-image
         with:
-          image-tag: gha-runner-essentials:test
+          image-tag: gha-runner-compose:essentials-test
           build-target: runner-build
           runner-suffix: ${{ format('essentials-{0}', matrix.arch) }}
           runner-components: all-essentials
