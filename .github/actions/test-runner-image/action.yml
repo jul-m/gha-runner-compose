@@ -23,11 +23,8 @@ inputs:
     description: "Optional extra runner labels (comma-separated) appended to the dynamic label"
     required: false
     default: ""
-  gh-token:
-    description: "Token used by gh CLI to create/delete the self-hosted runner"
-    required: true
   github-token:
-    description: "Token used by gh CLI to check workflow job status"
+    description: "Token used by gh CLI to manage the runner lifecycle and check workflow job status"
     required: true
 
 outputs:
@@ -103,7 +100,7 @@ runs:
     - name: Start runner container
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.gh-token }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |  # shell
         # Start runner container
         TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
@@ -174,7 +171,7 @@ runs:
       if: always()
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.gh-token }}
+        GH_TOKEN: ${{ inputs.github-token }}
       run: |  # shell
         # Cleanup runner
         docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
