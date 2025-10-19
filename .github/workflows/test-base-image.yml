@@ -94,7 +94,7 @@ jobs:
           counter=0
           while true; do
             JOB_STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
-              --jq ".jobs[] | select(.name == \"test-basic-job\") | .conclusion")
+              --jq ".jobs[] | select(.name == \"Test Container Runner\") | .conclusion")
             echo "Current test-basic-job status: $JOB_STATUS"
 
             if [ "$JOB_STATUS" = "success" ]; then
