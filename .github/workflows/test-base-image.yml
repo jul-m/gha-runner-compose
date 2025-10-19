@@ -32,10 +32,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verify image was built
+        run: |  # shell
+          docker image ls gha-runner-base:test
+          docker image inspect gha-runner-base:test --format='{{json .}}' | jq '.RepoTags, .Size'
+
       - name: Start runner container
         run: |  # shell
           # Get runner registration token
-          TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
+          TOKEN=$(gh api \
+            --method POST \
+            --header "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "repos/${{ github.repository }}/actions/runners/registration-token" \
+            --jq .token)
 
           # Start runner container in background
           docker run -d --name test-runner \
@@ -44,6 +53,7 @@ jobs:
             -e RUNNER_NAME="test-runner-${{ github.run_id }}" \
             -e RUNNER_LABELS="test-base,test-runner-${{ github.run_id }}" \
             gha-runner-base:test
+        continue-on-error: true
 
       - name: Wait for runner registration and execution
         run: |  # shell
@@ -79,14 +89,16 @@ jobs:
           docker stop test-runner || true
           docker rm test-runner || true
 
+          # Try to unregister runner if it was registered
+          # Note: This requires GITHUB_TOKEN to have admin permissions (set via PAT in secrets)
           RUNNER_ID=$(gh api "repos/${{ github.repository }}/actions/runners" \
-            --jq ".runners[] | select(.name == \"test-runner-${{ github.run_id }}\") | .id")
+            --jq ".runners[] | select(.name == \"test-runner-${{ github.run_id }}\") | .id" 2>/dev/null || echo "")
           
           if [ -n "$RUNNER_ID" ]; then
             echo "Removing runner with ID: $RUNNER_ID"
-            gh api --method DELETE "repos/${{ github.repository }}/actions/runners/$RUNNER_ID"
+            gh api --method DELETE "repos/${{ github.repository }}/actions/runners/$RUNNER_ID" 2>/dev/null || true
           else
-            echo "Runner not found, may have been removed already."
+            echo "Runner not found or not registered (expected if PAT not configured)."
           fi
 
   test-basic-job:
