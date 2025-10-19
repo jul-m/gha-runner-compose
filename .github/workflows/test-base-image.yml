@@ -22,6 +22,13 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Restore buildx cache
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: buildx-cache
+          path: .buildx-cache
+
       - name: Build base image (with cache)
         uses: docker/build-push-action@v4
         with:
