@@ -1,10 +1,14 @@
 name: Test Base Image
+run-name: "Test Base Image - ${{ github.event_name }} - #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
+  pull_request:
+    types: [synchronize, opened, reopened, edited]
 
 jobs:
   build-and-start-runner:
+    name: Build and Start Runner Container
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,8 +24,8 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build base image (with cache)
-        uses: docker/build-push-action@v4
+      - name: Build base image
+        uses: docker/build-push-action@v6
         with:
           context: .
           load: true
@@ -32,6 +36,7 @@ jobs:
 
       - name: Verify image was built
         run: |  # shell
+          # Verify image was built
           docker image ls gha-runner-base:test
           docker image inspect gha-runner-base:test --format='{{json .}}' | jq '.RepoTags, .Size'
 
@@ -118,8 +123,6 @@ jobs:
           docker stop test-runner || true
           docker rm test-runner || true
 
-          # Try to unregister runner if it was registered
-          # Note: This requires GITHUB_TOKEN to have admin permissions (set via PAT in secrets)
           RUNNER_ID=$(gh api "repos/${{ github.repository }}/actions/runners" \
             --jq ".runners[] | select(.name == \"test-runner-${{ github.run_id }}\") | .id" 2>/dev/null || echo "")
           
@@ -127,10 +130,11 @@ jobs:
             echo "Removing runner with ID: $RUNNER_ID"
             gh api --method DELETE "repos/${{ github.repository }}/actions/runners/$RUNNER_ID" 2>/dev/null || true
           else
-            echo "Runner not found or not registered (expected if PAT not configured)."
+            echo "Runner not found or not registered."
           fi
 
   test-basic-job:
+    name: Test Container Runner
     runs-on: 'test-runner-${{ github.run_id }}'
     steps:
       - name: Run basic test
