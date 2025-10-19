@@ -6,9 +6,7 @@ on:
 jobs:
   build-and-start-runner:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: write
+    permissions: write-all
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -40,11 +38,7 @@ jobs:
       - name: Start runner container
         run: |  # shell
           # Get runner registration token
-          TOKEN=$(gh api \
-            --method POST \
-            --header "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "repos/${{ github.repository }}/actions/runners/registration-token" \
-            --jq .token)
+          TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
 
           # Start runner container in background
           docker run -d --name test-runner \
