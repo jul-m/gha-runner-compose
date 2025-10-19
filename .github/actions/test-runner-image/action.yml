@@ -85,8 +85,10 @@ runs:
         load: true
         target: ${{ inputs.build-target }}
         tags: ${{ inputs.image-tag }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-from: |
+          type=gha,scope=${{ github.workflow }}-${{ inputs.runner-suffix }}
+        cache-to: |
+          type=gha,mode=max,scope=${{ github.workflow }}-${{ inputs.runner-suffix }}
         build-args: |
           RUNNER_COMPONENTS=${{ inputs.runner-components }}
 
