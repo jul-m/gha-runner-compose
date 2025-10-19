@@ -36,7 +36,6 @@ jobs:
 
   test-base:
     name: Test Container Runner (base / ${{ matrix.arch }})
-    needs: test-base-runner
     runs-on: ${{ format('test-runner-base-{0}-{1}', matrix.arch, github.run_id) }}
     strategy:
       fail-fast: false
@@ -85,7 +84,9 @@ jobs:
 
   test-essentials:
     name: Test Container Runner (essentials / ${{ matrix.arch }})
-    needs: test-essentials-runner
+    needs:
+      - test-base-runner
+      - test-base
     runs-on: ${{ format('test-runner-essentials-{0}-{1}', matrix.arch, github.run_id) }}
     strategy:
       fail-fast: false
