@@ -164,6 +164,9 @@ jobs:
           - arch: arm64
             host-runner: ubuntu-24.04-arm
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        
       - name: Validate "build" image (${{ matrix.arch }})
         uses: ./.github/actions/test-runner-image
         with:
