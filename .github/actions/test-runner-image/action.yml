@@ -118,16 +118,25 @@ runs:
         gunzip -c "${{ inputs.base-artifact-name }}.tar.gz" | docker load
         docker image ls
 
-    - name: Set up Buildx
-      if: inputs.skip-build != 'true'
+    - name: Set up Buildx (docker driver for local base image)
+      if: inputs.skip-build != 'true' && inputs.base-artifact-name != ''
       id: buildx
       uses: docker/setup-buildx-action@v3
       with:
         driver: docker
+        driver-opts: |
+          containerd-image-store=true
+
+    - name: Set up Buildx (default)
+      if: inputs.skip-build != 'true' && inputs.base-artifact-name == ''
+      id: buildx
+      uses: docker/setup-buildx-action@v3
 
     - name: Build image
-      if: inputs.skip-build != 'true'
+      if: inputs.skip-build != 'true' && inputs.base-artifact-name == ''
       uses: docker/build-push-action@v6
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       with:
         builder: ${{ steps.buildx.outputs.name }}
         context: .
@@ -141,6 +150,29 @@ runs:
         build-args: |
           RUNNER_COMPONENTS=${{ inputs.runner-components }}
           ${{ inputs.additional-build-args }}
+        secrets: |
+          id=GITHUB_TOKEN,env=GITHUB_TOKEN
+
+    - name: Build image (local base artifact)
+      if: inputs.skip-build != 'true' && inputs.base-artifact-name != ''
+      uses: docker/build-push-action@v6
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      with:
+        builder: ${{ steps.buildx.outputs.name }}
+        context: .
+        load: true
+        target: ${{ inputs.build-target }}
+        tags: ${{ inputs.image-tag }}
+        cache-from: |
+          type=gha,scope=gha-docker-build-${{ steps.setup-context.outputs.cache_scope }}
+        cache-to: |
+          type=gha,mode=max,scope=gha-docker-build-${{ steps.setup-context.outputs.cache_scope }}
+        build-args: |
+          RUNNER_COMPONENTS=${{ inputs.runner-components }}
+          ${{ inputs.additional-build-args }}
+        secrets: |
+          id=GITHUB_TOKEN,env=GITHUB_TOKEN
 
     - name: Save image as artifact
       if: inputs.output-artifact-name != ''
