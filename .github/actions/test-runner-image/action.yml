@@ -9,9 +9,6 @@ inputs:
   build-target:
     description: "Dockerfile target stage to build"
     required: true
-  arch:
-    description: "Architecture of the runner image being tested (amd64 or arm64)"
-    required: true
   runner-suffix:
     description: "Suffix used to generate unique runner/container names"
     required: true
@@ -19,16 +16,42 @@ inputs:
     description: "Optional RUNNER_COMPONENTS value passed during build"
     required: false
     default: ""
+  additional-build-args:
+    description: "Optional extra build arguments appended to docker build"
+    required: false
+    default: ""
   test-job-name:
-    description: "Name of the job that must succeed when executed on the started runner"
-    required: true
+    description: "Name of the job that must succeed when executed on the started runner (required unless skip-runner is true)"
+    required: false
+    default: ""
   additional-runner-labels:
     description: "Optional extra runner labels (comma-separated) appended to the dynamic label"
     required: false
     default: ""
   github-token:
     description: "Token used by gh CLI to manage the runner lifecycle and check workflow job status"
-    required: true
+    required: false
+    default: ""
+  base-artifact-name:
+    description: "Optional artifact (tar.gz) containing a base image to load before building"
+    required: false
+    default: ""
+  output-artifact-name:
+    description: "Optional artifact name used to upload the built image as tar.gz"
+    required: false
+    default: ""
+  cache-scope:
+    description: "Cache scope identifier used for docker build cache segregation"
+    required: false
+    default: ""
+  skip-build:
+    description: "Set to 'true' to skip docker build (expects image to be pre-loaded)"
+    required: false
+    default: "false"
+  skip-runner:
+    description: "Set to 'true' to skip runner start/wait/cleanup steps"
+    required: false
+    default: "false"
 
 outputs:
   runner-name:
@@ -53,6 +76,10 @@ runs:
         CONTAINER_NAME="test-runner-${{ inputs.runner-suffix }}-${{ github.run_id }}"
         IMAGE_TAG="${{ inputs.image-tag }}"
         ADDITIONAL_LABELS="${{ inputs.additional-runner-labels }}"
+        CACHE_SCOPE="${{ inputs.cache-scope }}"
+        if [[ -z "${CACHE_SCOPE}" ]]; then
+          CACHE_SCOPE="${{ inputs.runner-suffix }}"
+        fi
         if [[ -n "${ADDITIONAL_LABELS}" ]]; then
           RUNNER_LABELS="${RUNNER_LABEL},${ADDITIONAL_LABELS}"
         else
@@ -64,12 +91,14 @@ runs:
           echo "RUNNER_LABELS=${RUNNER_LABELS}"
           echo "CONTAINER_NAME=${CONTAINER_NAME}"
           echo "IMAGE_TAG=${IMAGE_TAG}"
+          echo "CACHE_SCOPE=${CACHE_SCOPE}"
         } >>"$GITHUB_ENV"
         {
           echo "runner_name=${RUNNER_NAME}"
           echo "runner_label=${RUNNER_LABEL}"
           echo "runner_labels=${RUNNER_LABELS}"
           echo "container_name=${CONTAINER_NAME}"
+          echo "cache_scope=${CACHE_SCOPE}"
         } >>"$GITHUB_OUTPUT"
 
     - name: Checkout code
@@ -78,10 +107,26 @@ runs:
     - name: Set up Docker
       uses: docker/setup-docker-action@v4
 
+    - name: Download base image artifact
+      if: inputs.base-artifact-name != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.base-artifact-name }}
+
+    - name: Load base image
+      if: inputs.base-artifact-name != ''
+      shell: bash
+      run: |  # shell
+        # Load base image from artifact
+        gunzip -c "${{ inputs.base-artifact-name }}.tar.gz" | docker load
+        docker image ls
+
     - name: Set up Buildx
+      if: inputs.skip-build != 'true'
       uses: docker/setup-buildx-action@v3
 
     - name: Build image
+      if: inputs.skip-build != 'true'
       uses: docker/build-push-action@v6
       with:
         context: .
@@ -89,11 +134,27 @@ runs:
         target: ${{ inputs.build-target }}
         tags: ${{ inputs.image-tag }}
         cache-from: |
-          type=gha,scope=gha-docker-build-${{ inputs.arch }}
+          type=gha,scope=gha-docker-build-${{ steps.setup-context.outputs.cache_scope }}
         cache-to: |
-          type=gha,mode=max,scope=gha-docker-build-${{ inputs.arch }}
+          type=gha,mode=max,scope=gha-docker-build-${{ steps.setup-context.outputs.cache_scope }}
         build-args: |
           RUNNER_COMPONENTS=${{ inputs.runner-components }}
+          ${{ inputs.additional-build-args }}
+
+    - name: Save image as artifact
+      if: inputs.output-artifact-name != ''
+      shell: bash
+      run: |  # shell
+        # Save runner image as compressed tar artifact
+        docker save "${IMAGE_TAG}" | gzip > "${{ inputs.output-artifact-name }}.tar.gz"
+
+    - name: Upload image artifact
+      if: inputs.output-artifact-name != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.output-artifact-name }}
+        path: ${{ inputs.output-artifact-name }}.tar.gz
+        retention-days: 1
 
     - name: Verify image was built
       shell: bash
@@ -103,11 +164,17 @@ runs:
         docker image inspect "${IMAGE_TAG}" --format='{{json .}}' | jq '.RepoTags, .Size'
 
     - name: Start runner container
+      if: inputs.skip-runner != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |  # shell
         # Start runner container
+        if [[ -z "${GH_TOKEN}" ]]; then
+          echo "❌ 'github-token' input is required when skip-runner is false."
+          exit 1
+        fi
+
         TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
         docker run -d --name "${CONTAINER_NAME}" \
           -e RUNNER_REPO_URL="${{ github.server_url }}/${{ github.repository }}" \
@@ -117,11 +184,23 @@ runs:
           "${IMAGE_TAG}"
 
     - name: Wait for runner registration and execution
+      if: inputs.skip-runner != 'true'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |  # shell
         # Wait for runner registration and execution
+        if [[ -z "${GITHUB_TOKEN}" ]]; then
+          echo "❌ 'github-token' input is required when skip-runner is false."
+          exit 1
+        fi
+
+        TEST_JOB_NAME="${{ inputs.test-job-name }}"
+        if [[ -z "${TEST_JOB_NAME}" ]]; then
+          echo "❌ 'test-job-name' input is required when skip-runner is false."
+          exit 1
+        fi
+
         counter=0
         while true; do
           echo "Waiting for runner readiness..."
@@ -149,23 +228,23 @@ runs:
           sleep 10
         done
 
-        echo "Waiting for job '${{ inputs.test-job-name }}' to complete..."
+        echo "Waiting for job '${TEST_JOB_NAME}' to complete..."
         counter=0
         while true; do
           JOB_STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
-            --jq ".jobs[] | select(.name == \"${{ inputs.test-job-name }}\") | .conclusion")
+            --jq ".jobs[] | select(.name == \"${TEST_JOB_NAME}\") | .conclusion")
 
           if [[ "${JOB_STATUS}" == "success" ]]; then
-            echo "✅ Job '${{ inputs.test-job-name }}' completed successfully."
+            echo "✅ Job '${TEST_JOB_NAME}' completed successfully."
             break
           elif [[ "${JOB_STATUS}" == "failure" || "${JOB_STATUS}" == "cancelled" || "${JOB_STATUS}" == "timed_out" ]]; then
-            echo "❌ Job '${{ inputs.test-job-name }}' failed with status: ${JOB_STATUS}"
+            echo "❌ Job '${TEST_JOB_NAME}' failed with status: ${JOB_STATUS}"
             exit 1
           fi
 
           counter=$((counter + 1))
           if [[ ${counter} -ge 30 ]]; then
-            echo "❌ Timeout waiting for job '${{ inputs.test-job-name }}' to complete."
+            echo "❌ Timeout waiting for job '${TEST_JOB_NAME}' to complete."
             exit 1
           fi
 
@@ -173,7 +252,7 @@ runs:
         done
 
     - name: Cleanup runner
-      if: always()
+      if: always() && inputs.skip-runner != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
@@ -181,6 +260,11 @@ runs:
         # Cleanup runner
         docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
         docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+
+        if [[ -z "${GH_TOKEN}" ]]; then
+          echo "ℹ️ No GitHub token provided; skipping GitHub API cleanup."
+          exit 0
+        fi
 
         RUNNER_ID=$(gh api "repos/${{ github.repository }}/actions/runners" \
           --jq ".runners[] | select(.name == \"${RUNNER_NAME}\") | .id" 2>/dev/null || echo "")
@@ -193,19 +277,30 @@ runs:
         fi
 
     - name: Cancel workflow if dependent job is still waiting
-      if: failure()
+      if: failure() && inputs.skip-runner != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |  # shell
         # Cancel workflow when the dependent job is still waiting for a runner
+        if [[ -z "${GH_TOKEN}" ]]; then
+          echo "ℹ️ No GitHub token provided; skipping workflow cancellation."
+          exit 0
+        fi
+
         set -euo pipefail
 
+        TEST_JOB_NAME="${{ inputs.test-job-name }}"
+        if [[ -z "${TEST_JOB_NAME}" ]]; then
+          echo "ℹ️ No test job name provided; skipping workflow cancellation."
+          exit 1
+        fi
+
         JOB_JSON=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
-          --jq ".jobs[] | select(.name == \"${{ inputs.test-job-name }}\")") || true
+          --jq ".jobs[] | select(.name == \"${TEST_JOB_NAME}\")") || true
 
         if [[ -z "${JOB_JSON}" ]]; then
-          echo "ℹ️ Dependent job '${{ inputs.test-job-name }}' not found; skipping workflow cancellation."
+          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' not found; skipping workflow cancellation."
           exit 1
         fi
 
@@ -213,10 +308,10 @@ runs:
         JOB_CONCLUSION=$(jq -r '.conclusion // ""' <<<"${JOB_JSON}")
 
         if [[ "${JOB_STATUS}" == "queued" || "${JOB_STATUS}" == "in_progress" ]] && [[ -z "${JOB_CONCLUSION}" ]]; then
-          echo "❌ Dependent job '${{ inputs.test-job-name }}' still ${JOB_STATUS}; cancelling workflow ${GITHUB_RUN_ID}."
+          echo "❌ Dependent job '${TEST_JOB_NAME}' still ${JOB_STATUS}; cancelling workflow ${GITHUB_RUN_ID}."
           gh run cancel "${GITHUB_RUN_ID}" || true
         else
-          echo "ℹ️ Dependent job '${{ inputs.test-job-name }}' status='${JOB_STATUS}' conclusion='${JOB_CONCLUSION}'; skipping workflow cancellation."
+          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' status='${JOB_STATUS}' conclusion='${JOB_CONCLUSION}'; skipping workflow cancellation."
         fi
 
         exit 1
