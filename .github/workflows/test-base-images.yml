@@ -31,6 +31,7 @@ jobs:
         with:
           image-tag: gha-runner-compose-base:test
           build-target: base
+          arch: ${{ matrix.arch }}
           runner-suffix: ${{ format('base-{0}', matrix.arch) }}
           test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
@@ -79,6 +80,7 @@ jobs:
         with:
           image-tag: gha-runner-compose:essentials-test
           build-target: runner-build
+          arch: ${{ matrix.arch }}
           runner-suffix: ${{ format('essentials-{0}', matrix.arch) }}
           runner-components: all-essentials
           test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
@@ -101,5 +103,54 @@ jobs:
         run: |  # shell
           # Basic job test for essentials / ${{ matrix.arch }}
           echo "Hello from self-hosted runner (essentials / ${{ matrix.arch }})!"
+          echo "Runner is working correctly."
+          uname -a
+
+  # TEST "BUILD" IMAGE
+  test-build-runner:
+    name: Build+Start Runner (build / ${{ matrix.arch }})
+    needs: test-essentials-runner
+    runs-on: ${{ matrix.host-runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Validate build image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose:build-test
+          build-target: runner-build
+          arch: ${{ matrix.arch }}
+          runner-suffix: ${{ format('build-{0}', matrix.arch) }}
+          runner-components: all-build
+          test-job-name: ${{ format('Test Runner (build / {0})', matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+
+  test-build:
+    name: Test Runner (build / ${{ matrix.arch }})
+    needs: test-essentials-runner
+    runs-on: ${{ format('test-runner-build-{0}-{1}', matrix.arch, github.run_id) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - name: Run basic test
+        run: |  # shell
+          # Basic job test for build / ${{ matrix.arch }}
+          echo "Hello from self-hosted runner (build / ${{ matrix.arch }})!"
           echo "Runner is working correctly."
           uname -a

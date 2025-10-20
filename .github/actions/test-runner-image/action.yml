@@ -9,6 +9,9 @@ inputs:
   build-target:
     description: "Dockerfile target stage to build"
     required: true
+  arch:
+    description: "Architecture of the runner image being tested (amd64 or arm64)"
+    required: true
   runner-suffix:
     description: "Suffix used to generate unique runner/container names"
     required: true
@@ -86,9 +89,9 @@ runs:
         target: ${{ inputs.build-target }}
         tags: ${{ inputs.image-tag }}
         cache-from: |
-          type=gha,scope=${{ github.workflow }}-${{ inputs.runner-suffix }}
+          type=gha,scope=gha-docker-build-${{ inputs.arch }}
         cache-to: |
-          type=gha,mode=max,scope=${{ github.workflow }}-${{ inputs.runner-suffix }}
+          type=gha,mode=max,scope=gha-docker-build-${{ inputs.arch }}
         build-args: |
           RUNNER_COMPONENTS=${{ inputs.runner-components }}
 
