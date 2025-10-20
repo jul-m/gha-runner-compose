@@ -31,7 +31,7 @@ jobs:
         with:
           image-tag: gha-runner-compose-base:test-${{ matrix.arch }}
           build-target: base
-          runner-suffix: build-base-${{ matrix.arch }}
+          runner-suffix: base-${{ matrix.arch }}
           cache-scope: base-${{ matrix.arch }}
           output-artifact-name: base-image-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
@@ -75,7 +75,7 @@ jobs:
           base-artifact-name: base-image-${{ matrix.arch }}
           image-tag: gha-runner-compose:essentials-test-${{ matrix.arch }}
           build-target: runner-build
-          runner-suffix: build-essentials-${{ matrix.arch }}
+          runner-suffix: essentials-${{ matrix.arch }}
           cache-scope: essentials-${{ matrix.arch }}
           runner-components: all-essentials
           additional-build-args: |
