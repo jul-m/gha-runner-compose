@@ -44,6 +44,17 @@ source "$LOCAL_INSTALL/helpers.sh"
 source "$HELPER_SCRIPTS/install.sh"
 source "$HELPER_SCRIPTS/etc-environment.sh"
 
+ensure_invoke_tests() {
+    local helper_script="$HELPER_SCRIPTS/invoke-tests.sh"
+
+    if [ ! -f "$helper_script" ]; then
+        fail "Missing invoke-tests helper: $helper_script"
+    fi
+
+    chmod +x "$helper_script"
+    ln -sf "$helper_script" /usr/local/bin/invoke_tests
+}
+
 # Remove duplicates from a named array (in-place)
 # Usage: dedup_components array_name
 dedup_components() {
@@ -397,6 +408,8 @@ run_preinstall() {
     fi
 
     mkdir -p "$INSTALLER_SCRIPT_FOLDER/installed"
+
+    ensure_invoke_tests
 
     reload_etc_environment
     log "Pre-installation steps completed"

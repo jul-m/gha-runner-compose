@@ -1,4 +1,3 @@
-
 # gha-runner-compose
 
 > Run your GitHub Actions workflows in containers that faithfully replicate GitHub-hosted runners.
@@ -21,13 +20,14 @@ Under the hood, this project relies on the same scripts used by `actions/runner-
     - [Choose or Build an Image](#choose-or-build-an-image)
     - [Deploy a Self-Hosted GitHub Runner](#deploy-a-self-hosted-github-runner)
     - [Test Your Workflows Locally](#test-your-workflows-locally)
-  - [Generate Custom Images (without Docker Compose)](#generate-custom-images-without-docker-compose)
-    - [General Case](#general-case)
-    - [Base Image](#base-image)
-    - [Advanced Build](#advanced-build)
-      - [Optional: Increase GitHub API Rate Limits During Build](#optional-increase-github-api-rate-limits-during-build)
+  - [Custom Image Builds](#custom-image-builds)
+    - [Basic Build Command](#basic-build-command)
+    - [Build Arguments](#build-arguments)
+    - [Building the Base Image](#building-the-base-image)
+  - [Environment Variables](#environment-variables)
   - [How the Build Works](#how-the-build-works)
-  - [Entrypoint](#entrypoint)
+    - [Entrypoint](#entrypoint)
+  - [Advanced Topics](#advanced-topics)
   - [Repository Structure](#repository-structure)
   - [License](#license)
   - [Disclaimer — No Warranty and Limitation of Liability](#disclaimer--no-warranty-and-limitation-of-liability)
@@ -35,9 +35,10 @@ Under the hood, this project relies on the same scripts used by `actions/runner-
 ---
 
 ## Quick Start
+
 ### Choose or Build an Image
 
-The official GitHub runner images are built from a set of scripts, each installing a specific component. This project offers an image containing all components (`<image-tag>`), but it is large. The Docker build system implemented here allows you to create custom images containing only the necessary components to optimize their size. The list of available components is provided in [docs/components.md](./docs/components.md). Pre-built images grouping sets of components are also available (see [docs/images.md](./docs/images.md)).
+The official GitHub runner images are built from a set of scripts, each installing a specific component. This project offers an image containing all components, but it is large. The Docker build system implemented here allows you to create custom images containing only the necessary components to optimize their size. The list of available components is provided in [docs/components.md](./docs/components.md). Pre-built images grouping sets of components are also available (see [docs/images.md](./docs/images.md)).
 
 Three scenarios are possible:
 
@@ -58,7 +59,7 @@ Three scenarios are possible:
 
 To build a custom image, you can use:
 -   **Docker Compose** with the [compose.build.yml](./compose.build.yml) file (see the next section).
--   The **`docker buildx build`** command (see the [Generate Custom Images](#generate-custom-images-without-docker-compose) section).
+-   The **`docker buildx build`** command (see the [Custom Image Builds](#custom-image-builds) section).
 
 The complete list of components and categories is available in [docs/components.md](./docs/components.md). It is possible to install an entire category by specifying `all-<category>`. Note that some components are not available on the ARM64 architecture.
 
@@ -136,12 +137,12 @@ If you have never used self-hosted GitHub runners, consult the [official GitHub 
 
 **Common errors:**
 -   **Registration failure:**
-  ```
-  Http response code: NotFound from 'POST https://api.github.com/actions/runner-registration'
-  Response status code does not indicate success: 404 (Not Found).
-  [entrypoint.sh][ERROR] Failed to configure runner
-  ```
-  This error is usually due to an expired token or an incorrect repository/organization URL. Check the `RUNNER_REPO_URL` and `RUNNER_TOKEN` variables in your `.env` file.
+    ```
+    Http response code: NotFound from 'POST https://api.github.com/actions/runner-registration'
+    Response status code does not indicate success: 404 (Not Found).
+    [entrypoint.sh][ERROR] Failed to configure runner
+    ```
+    This error is usually due to an expired token or an incorrect repository/organization URL. Check the `RUNNER_REPO_URL` and `RUNNER_TOKEN` variables in your `.env` file.
 
 ---
 
@@ -153,49 +154,54 @@ It is possible to test your GitHub Actions workflows locally to facilitate devel
 > To work with `act`, the `nodejs` component must be included in the image, in addition to the components required by your workflows. All pre-built `ghcr.io/jul-m/gha-runner-compose:u24.04-*` images include `nodejs-lite`, which is sufficient. The base image `ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest` does not contain it.
 
 To use `act` with `gha-runner-compose`:
--   If you are building a custom image, follow the instructions in the [Generate Custom Images](#generate-custom-images-without-docker-compose) section.
+-   If you are building a custom image, follow the instructions in the [Custom Image Builds](#custom-image-builds) section.
 -   Use the `-P` option to map runner labels to Docker images. For example, to use the `ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest` image for `ubuntu-latest` jobs:
-  ```bash
-  act -P ubuntu-latest=ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest
-  ```
+    ```bash
+    act -P ubuntu-latest=ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest
+    ```
 -   If you are using a locally built image, add the `--pull=false` option to prevent `act` from trying to download it from a public registry:
-  ```bash
-  act -P ubuntu-latest=<your-image-name> --pull=false
-  ```
+    ```bash
+    act -P ubuntu-latest=<your-image-name> --pull=false
+    ```
 -   If you get a `node: command not found` error, check that the `nodejs` or `nodejs-lite` component is included in your image.
 -   If your workflows use Docker (Docker-in-Docker), enable privileged mode with `--privileged` and ensure the `docker` component is present in the image. **Be aware of the security implications; only enable it if you are fully aware of the risks and trust the code you are running!**
 -   For more details, consult the [official `act` documentation](https://nektosact.com/).
 
 ---
 
-## Generate Custom Images (without Docker Compose)
-### General Case
-You can build custom images using `docker buildx build`. To speed up the process, it is recommended to start from an image that already contains some of the desired components. For full control, start from the base image `ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest`.
+## Custom Image Builds
 
-**Base command:**
+You can build custom images using `docker buildx build` without Docker Compose. To speed up the process, it is recommended to start from an image that already contains some of the desired components. For full control, start from the base image `ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest`.
+
+### Basic Build Command
+
 ```bash
 docker buildx build \
     --build-arg BASE_IMAGE=ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest \
-    --build-arg RUNNER_COMPONENTS=java-tools,yq \
+    --build-arg RUNNER_COMPONENTS=java-tools,yq,docker \
     --target runner-build \
-    -t my-gha-runner:java-latest .
+    -t my-gha-runner:latest .
 ```
 
-**Build arguments:**
--   `--build-arg <arg>=<value>`:
-    -   `BASE_IMAGE`: The base image to use. To build from a clean Ubuntu 24.04 image, do not specify this argument or set it to `base`.
-    -   `RUNNER_COMPONENTS`: A comma-separated list of components and categories (`all-<category>`) to include. Components already present in the base image will be ignored. The full list is available in [docs/components.md](./docs/components.md).
-    -   `APT_PACKAGES` (optional): A comma-separated list of additional APT packages to install.
-    -   `PWSH_MODULES` (optional): A comma-separated list of additional PowerShell modules to install (e.g., `Microsoft.Graph,Az`).
--   `--target <stage>`: Must be `runner-build` for a functional image. The `base` stage only generates the prerequisite layer.
--   `-t <image-name>`: Name of the resulting image.
--   `--platform <platform>` (optional): Target platform (e.g., `linux/amd64`, `linux/arm64`). Requires a `buildx` builder configured for multi-architecture.
--   `--progress=plain` (optional): Displays the full build logs in the terminal.
--   `.`: Build context (the root directory of this repository).
+### Build Arguments
 
-### Base Image
+| Argument | Required | Description |
+|---|---|---|
+| `BASE_IMAGE` | No | Base image to use. Defaults to the `base` stage (clean Ubuntu 24.04). Use a pre-built image tag to extend it. |
+| `RUNNER_COMPONENTS` | Yes | Comma-separated list of components and/or categories (`all-<category>`). Already-installed components are skipped. See [docs/components.md](./docs/components.md). |
+| `APT_PACKAGES` | No | Comma-separated list of additional APT packages to install. |
+| `PWSH_MODULES` | No | Comma-separated list of additional PowerShell modules to install (e.g., `Microsoft.Graph,Az`). |
 
-To build the base image containing only the prerequisites (equivalent to `ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest`), use the `base` stage:
+Other useful `docker buildx build` flags:
+-   `--target runner-build`: **Required.** Selects the final stage. Use `--target base` to build only the prerequisite layer.
+-   `-t <name:tag>`: Name and tag the resulting image.
+-   `--platform <platform>`: Target platform (e.g., `linux/amd64`, `linux/arm64`). Requires a multi-arch `buildx` builder.
+-   `--progress=plain`: Displays full build logs in the terminal.
+-   `.`: Build context — the root directory of this repository.
+
+### Building the Base Image
+
+To build the base image containing only the prerequisites (equivalent to `ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest`):
 
 ```bash
 docker buildx build \
@@ -203,66 +209,23 @@ docker buildx build \
     -t my-gha-runner-base:latest .
 ```
 
-### Advanced Build
+> [!TIP]
+> For advanced build topics — dedicated BuildKit builder, multi-architecture builds, GitHub API rate limits, building all image tiers, and Docker cache maintenance — see [docs/building.md](./docs/building.md).
 
-To optimize multiple builds, you can use a dedicated BuildKit builder that leverages the download cache.
+---
 
-1.  **Create the dedicated builder:**
-    ```bash
-    docker buildx create --driver docker-container \
-        --name gha-runner-compose-builder --config ./tools/buildkitd.toml
-    ```
+## Environment Variables
 
-2.  **Launch the build with this builder:**
-    ```bash
-    docker build --build-arg RUNNER_COMPONENTS=all \
-        --target runner-build --progress=plain \
-        -t my-gha-runner:all-latest \
-        --builder gha-runner-compose-builder --load .
-    ```
-    The `--load` option is necessary to load the image into the local Docker engine.
+These variables control the runner's behavior at container startup (set in `.env` or `docker-compose` `environment`):
 
-#### Optional: Increase GitHub API Rate Limits During Build
-
-Some upstream scripts download assets from GitHub (releases, raw files, API metadata). Anonymous requests are heavily rate‑limited. You can optionally provide a GitHub token (classic PAT or a fine‑grained token with public repo scope) **without baking it into the image layers** by using a BuildKit secret. The custom curl/wget wrappers automatically add an `Authorization: Bearer` header for GitHub domains when `GITHUB_TOKEN` is available.
-
-1. Provide the token to BuildKit. You can export it as an environment variable **or** reference a file directly:
-```bash
-# Option A: environment variable (used by --secret env=...)
-export GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxx
-
-# Option B: store it in a file and reference it later
-echo "ghp_xxxxxxxxxxxxxxxxxxxxx" > ~/.config/github-token
-```
-2. Pass it as a secret when building:
-```bash
-docker buildx build \
-    --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \  # with Option A
-    --build-arg RUNNER_COMPONENTS=yq,docker,java-tools \
-    --target runner-build -t my-runner:latest .
-
-# or, using Option B
-docker buildx build \
-    --secret id=GITHUB_TOKEN,src=$HOME/.config/github-token \
-    --build-arg RUNNER_COMPONENTS=yq,docker,java-tools \
-    --target runner-build -t my-runner:latest .
-```
-3. Or with docker compose (example snippet inside your service):
-```yaml
-build:
-    context: .
-    target: runner-build
-    secrets:
-        - GITHUB_TOKEN
-secrets:
-    GITHUB_TOKEN:
-        environment: GITHUB_TOKEN  # or: file: ~/.config/github-token
-```
-
-Nothing is persisted in the final image: the secret is exposed only inside each `RUN` layer where it is mounted. If you omit the secret entirely, builds fall back to anonymous requests (previous behavior).
-
-> [!NOTE]
-> The wrappers automatically look for `GITHUB_TOKEN` in the environment **and** inside `/run/secrets/GITHUB_TOKEN`. They purposely skip injection if you already set an explicit `Authorization` header in your build commands, or if the target URL is not a GitHub domain (`github.com`, `api.github.com`, `raw.githubusercontent.com`, `objects.githubusercontent.com`).
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `RUNNER_REPO_URL` | **Yes** | — | Target repository or organization URL (e.g., `https://github.com/<owner>/<repo>`). |
+| `RUNNER_TOKEN` | **Yes** | — | GitHub runner registration token. Only needed on first start; credentials are persisted in the `/opt/actions-runner` volume. |
+| `RUNNER_NAME` | No | Container hostname (truncated) | Display name of the runner as registered in GitHub. Must be unique per repo/org. |
+| `RUNNER_LABELS` | No | `docker-runner,docker-runner-<arch>,<runner_name>` | Comma-separated custom labels. Overrides the defaults when set. |
+| `RUNNER_WORKDIR` | No | `/home/runner/work` | Working directory for workflow jobs. |
+| `RUNNER_EGRESS_RATE` | No | — | Network egress bandwidth limit (e.g., `5mbit`). |
 
 ---
 
@@ -273,43 +236,46 @@ The build pipeline relies on a multi-stage `Dockerfile` and reuses the official 
 -   **Source of upstream scripts:** The scripts come from the `runner-images-src/` Git submodule. To ensure stability and security, a frozen version of these scripts is copied to `docker-assets/from-upstream/` and used during the build.
 
 -   **Main `Dockerfile` stages:**
-    1.  **`base`:**
-        -   Copies the frozen upstream scripts and assets from `docker-assets/from-upstream/` to `/imagegeneration/`, and local build logic from `docker-build/` to `/imagegeneration/docker-build/`.
-        -   Enables APT caching during build (temporarily disables `docker-clean` and symlinks `zz-force-apt-cache.conf`), installs base packages, creates the `runner` user and directories, then runs `local-install/install-prereqs.sh` (installs the GitHub Actions runner, PowerShell, repositories). Finally restores APT settings via `local-install/clean-restore.sh`.
-        -   Sets the container startup: copies `entrypoint.sh`, sets `ENTRYPOINT ["/entrypoint.sh"]`, `USER runner`, and `WORKDIR` to `${RUNNER_WORKDIR}`.
-    2.  **`runner-build`:**
-        -   Inherits from `${BASE_IMAGE}` (defaults to the `base` stage). It does not re-copy sources; it expects `/imagegeneration/` from the base image.
-        -   Re-enables the APT cache optimization during component installation, runs `local-install/install-components.sh` driven by `RUNNER_COMPONENTS` and optional `APT_PACKAGES` and `PWSH_MODULES`, then restores APT settings.
-        -   Resolves dependencies and categories (`all`, `all-<category>`) defined in `local-install/components.csv`, and records installed components in `/imagegeneration/installed/components.txt` to avoid reinstallation.
-    3.  **Resulting image:**
-        -   The `runner-build` stage is the one you should tag/use as the final image.
+    1.  **`base`:** Copies frozen upstream scripts and local build logic, installs base packages, creates the `runner` user, runs `install-prereqs.sh` (GitHub Actions runner + PowerShell), and sets up the entrypoint.
+    2.  **`runner-build`:** Inherits from `${BASE_IMAGE}` (defaults to `base`). Runs `install-components.sh` driven by `RUNNER_COMPONENTS`, resolves dependencies and categories from `components.csv`, and records installed components in `/imagegeneration/installed/components.txt`.
 
 -   **Component override logic:**
     -   For each component `<comp>`, the orchestrator first looks for a local script `docker-build/components/<comp>.sh`.
-    -   **If it exists:** this script is executed. It has the ability to modify the corresponding upstream script (for example, to adapt it for ARM64 or a container context) before calling it.
+    -   **If it exists:** this script is executed. It can modify the upstream script (e.g., to adapt it for ARM64 or container context) before calling it.
     -   **Otherwise:** the upstream script `/imagegeneration/build/install-<comp>.sh` is executed directly.
 
--   **Utility wrappers (`./docker-build/bin/`):**
-    -   `systemctl`: A fake `systemd` that redirects calls to `service` or `init.d` scripts, allowing upstream scripts to work in a container.
-    -   `curl` and `wget`: Wrappers that cache downloaded artifacts in `/var/cache/gha-download-cache` (cached by BuildKit), reducing build times. APT metadata and packages are also cached via BuildKit cache mounts.
+-   **Utility wrappers (`docker-build/bin/`):**
+    -   `systemctl`: A fake `systemd` redirecting calls to `service` or `init.d` scripts, allowing upstream scripts to work in a container.
+    -   `curl` and `wget`: Wrappers that cache downloads in `/var/cache/gha-download-cache` (BuildKit cache mount), reducing build times.
 
----
-
-## Entrypoint
+### Entrypoint
 
 The `/entrypoint.sh` script manages the runner's lifecycle in the container:
 -   **Initial checks:** Requires `RUNNER_TOKEN` on the first start.
 -   **Label configuration:** Applies default labels (`docker-runner`, `docker-runner-<arch>`) if `RUNNER_LABELS` is not defined.
--   **Runner management:** Ensures the runner binary is present and displays the list of installed components.
+-   **Runner management:** Ensures the runner binary is present (extracts from cache or downloads) and displays installed components.
 -   **Conditional registration:** Executes `config.sh` only if the runner is not already configured (i.e., if the `.runner` file does not exist).
--   **Execution and clean shutdown:** Launches `run.sh` in the background and traps signals (`SIGINT`, `SIGTERM`) to ensure a graceful shutdown of the runner.
+-   **Execution and clean shutdown:** Launches `run.sh` in the background and traps signals (`SIGINT`, `SIGTERM`) for graceful shutdown.
+
+---
+
+## Advanced Topics
+
+For more detailed information, see the following guides:
+
+| Topic | Document |
+|---|---|
+| Advanced build configuration (BuildKit, multi-arch, GITHUB_TOKEN, building all tiers, Docker maintenance) | [docs/building.md](./docs/building.md) |
+| Full list of components, categories, and architecture support | [docs/components.md](./docs/components.md) |
+| Pre-built images reference (tags, sizes, layering strategy) | [docs/images.md](./docs/images.md) |
 
 ---
 
 ## Repository Structure
 
 -   `Dockerfile`: Multi-stage build file.
--   `compose.*.yml`: Docker Compose files for different use cases.
+-   `compose.yml`: Docker Compose for pre-built images.
+-   `compose.build.yml`: Docker Compose for custom builds.
 -   `docker-assets/`: Files copied into the Docker image.
     -   `entrypoint.sh`: Container startup script.
     -   `from-upstream/`: Frozen copy of scripts and `toolset.json` from `actions/runner-images`.
@@ -317,9 +283,9 @@ The `/entrypoint.sh` script manages the runner's lifecycle in the container:
     -   `local-install/`: Orchestration scripts (`install-prereqs.sh`, `install-components.sh`), `helpers.sh`, and `components.csv` (component definitions).
     -   `components/`: Override scripts to adapt specific component installations.
     -   `bin/`: Wrappers for `systemctl`, `curl`, and `wget`.
--   `docs/`: Additional documentation (components, images).
+-   `docs/`: Additional documentation ([components](./docs/components.md), [images](./docs/images.md), [building](./docs/building.md)).
 -   `runner-images-src/` (Git submodule): Mirror of the `actions/runner-images` repository, used as a source for upstream scripts.
--   `tools/`: Tools and resources for development and testing.
+-   `tools/`: BuildKit configuration and development resources.
 
 ---
 

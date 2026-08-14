@@ -28,6 +28,16 @@ sed -i 's/^systemctl is-active/# systemctl is-active/g;s/^systemctl is-enabled/#
 # Comments docker calls and tests (daemon not available in build context)
 sed -i 's/^sleep 10/# sleep 10/g' "$script"
 sed -i 's/^docker info/# docker info/g' "$script"
+
+# Upstream also pre-pulls a set of images (Dependabot updater, gh-aw firewall/MCP server) on
+# non-22.04 images, guarded by `if ! is_ubuntu22; then ... fi`. This requires a running daemon
+# too, so comment out the whole block (not just the `docker pull` lines, to keep the script
+# syntactically valid with an empty if-body).
+sed -i '/^if ! is_ubuntu22; then$/,/^fi$/ s/^/# /' "$script"
+
+# invoke_tests is wired up globally (see install-components.sh:ensure_invoke_tests), but the
+# Docker Pester tests exercise a running daemon, which does not exist during `docker build`.
+# Skip them deliberately here rather than let them fail.
 sed -i 's/^invoke_tests/# invoke_tests/g' "$script"
 
 sh -c "$script" || fail "docker install failed"
