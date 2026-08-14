@@ -73,11 +73,7 @@ jobs:
         if: steps.copy_sources.outputs.modified == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
-          # A PAT is required here (not the default GITHUB_TOKEN): PRs opened with the default
-          # token don't get their downstream `pull_request` workflow runs auto-approved, so
-          # Test Runner Images stays stuck on "action_required" and never actually validates
-          # these automated syncs.
-          token: ${{ secrets.ACTION_GH_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           branch: update-runner-images
           title: Update runner images sources
           body: Automated update of runner images sources from upstream.

@@ -71,6 +71,11 @@ runs:
 
     - name: Checkout code
       uses: actions/checkout@v5
+      with:
+        # On workflow_run, github.sha resolves to the default branch's HEAD,
+        # not the branch that triggered the source workflow - always target
+        # the fixed update-runner-images branch in that case instead.
+        ref: ${{ github.event_name == 'workflow_run' && 'update-runner-images' || github.sha }}
 
     - name: Set up Docker
       uses: docker/setup-docker-action@v4
