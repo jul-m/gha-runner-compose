@@ -59,6 +59,7 @@ jobs:
       is_release_pr: ${{ steps.resolve.outputs.is_release_pr }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       content_hash: ${{ steps.hash.outputs.content_hash }}
+      exists_json: ${{ steps.determine.outputs.exists_json }}
     steps:
       - name: Resolve ref to test
         id: resolve
@@ -103,16 +104,33 @@ jobs:
       - name: Determine whether to proceed
         id: determine
         run: |  # shell
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ steps.resolve.outputs.is_release_pr }}" != "true" ]]; then
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.resolve.outputs.is_release_pr }}" != "true" ]]; then
             echo "Not a release PR - large tiers only auto-build for main -> release PRs (use workflow_dispatch otherwise)."
             echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "exists_json={}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Checked once here, not per-job: a job whose image already exists
+          # is skipped entirely below - no runner spin-up, no re-test.
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          BASE="${{ env.STAGING_IMG }}:content-${{ steps.hash.outputs.content_hash }}"
+          RESULT="{}"
+          for NAME in base essentials build medium large xlarge all; do
+            if docker buildx imagetools inspect "${BASE}-${NAME}-amd64" >/dev/null 2>&1 \
+               && docker buildx imagetools inspect "${BASE}-${NAME}-arm64" >/dev/null 2>&1; then
+              RESULT=$(jq -c --arg k "${NAME}" '. + {($k): true}' <<<"${RESULT}")
+            else
+              RESULT=$(jq -c --arg k "${NAME}" '. + {($k): false}' <<<"${RESULT}")
+            fi
+          done
+          echo "exists_json=${RESULT}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-            BASE="${{ env.STAGING_IMG }}:content-${{ steps.hash.outputs.content_hash }}-build"
-            if docker buildx imagetools inspect "${BASE}-amd64" >/dev/null 2>&1 \
-               && docker buildx imagetools inspect "${BASE}-arm64" >/dev/null 2>&1; then
+            BUILD_EXISTS=$(jq -r '.build' <<<"${RESULT}")
+            if [[ "${BUILD_EXISTS}" == "true" ]]; then
               echo "should_run=true" >> "$GITHUB_OUTPUT"
             else
               echo "ci.yml hasn't produced a build-category image for this exact content yet - nothing to do."
@@ -130,7 +148,7 @@ jobs:
   build-test-base:
     name: Build and Test Base Image (${{ matrix.arch }})
     needs: check-target
-    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true'
+    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
     strategy:
@@ -164,7 +182,7 @@ jobs:
   test-base:
     name: Test Runner (base / ${{ matrix.arch }})
     needs: check-target
-    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true'
+    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
     runs-on: ${{ format('test-runner-lt-base-{0}-{1}', matrix.arch, github.run_id) }}
     timeout-minutes: 15
     strategy:
@@ -183,6 +201,7 @@ jobs:
   build-test-essentials:
     name: Build and Test Essentials Image (${{ matrix.arch }})
     needs: [check-target, build-test-base]
+    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
     strategy:
@@ -218,7 +237,8 @@ jobs:
 
   test-essentials:
     name: Test Runner (essentials / ${{ matrix.arch }})
-    needs: build-test-base
+    needs: [check-target, build-test-base]
+    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
     runs-on: ${{ format('test-runner-lt-essentials-{0}-{1}', matrix.arch, github.run_id) }}
     timeout-minutes: 15
     strategy:
@@ -237,6 +257,7 @@ jobs:
   build-test-category:
     name: Build and Test build Image (${{ matrix.arch }})
     needs: [check-target, build-test-essentials]
+    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).build != true
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
     strategy:
@@ -272,7 +293,8 @@ jobs:
 
   test-category:
     name: Test Runner (build / ${{ matrix.arch }})
-    needs: build-test-essentials
+    needs: [check-target, build-test-essentials]
+    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).build != true
     runs-on: ${{ format('test-runner-lt-build-{0}-{1}', matrix.arch, github.run_id) }}
     timeout-minutes: 15
     strategy:
@@ -305,7 +327,7 @@ jobs:
     # cancelled() itself, and success() is false when a needed job was
     # skipped, not just when it failed. always() bypasses that, then the
     # explicit checks below restore real failure-blocking.
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled'
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).medium != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 90
     strategy:
@@ -344,6 +366,7 @@ jobs:
   build-tier-large:
     name: Build and Test large Tier (${{ matrix.arch }})
     needs: [check-target, build-tier-medium]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium.result != 'failure' && needs.build-tier-medium.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).large != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 90
     strategy:
@@ -382,6 +405,7 @@ jobs:
   build-tier-xlarge:
     name: Build and Test xlarge Tier (${{ matrix.arch }})
     needs: [check-target, build-tier-large]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large.result != 'failure' && needs.build-tier-large.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).xlarge != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 120
     strategy:
@@ -420,6 +444,7 @@ jobs:
   build-tier-all:
     name: Build and Test all Tier (${{ matrix.arch }})
     needs: [check-target, build-tier-xlarge]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge.result != 'failure' && needs.build-tier-xlarge.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).all != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 120
     strategy:
