@@ -22,13 +22,12 @@ permissions:
   packages: write
 
 env:
-  # Every base/essentials/build-category image is pushed under this run-scoped
-  # GHCR tag once tested, so the next stage pulls it directly as its BASE_IMAGE
-  # build-arg instead of the old artifact save/upload/download/load round trip
-  # (a `type=registry` cache-to export isn't a pullable image on its own -
-  # confirmed: `docker pull` on a cache-scope tag fails with "mismatched image
-  # rootfs and manifest layers"). Cleaned up by the cleanup-ci-images job.
-  CI_RUN_TAG: ci-${{ github.run_id }}
+  # Every base/essentials/build-category image is pushed under a content-
+  # addressed GHCR tag (content-<hash>-<name>-<arch>, see check-target's
+  # "Compute content hash" step) once tested, so the next stage pulls it
+  # directly as its BASE_IMAGE build-arg - and, since the tag is a function
+  # of content rather than this run's ID, a later run with identical inputs
+  # skips rebuilding entirely (see the composite action's content-tag input).
   # Everything transient (intra-run hand-off, release-PR staging) lives in this
   # package, which this workflow creates and therefore has write access to by
   # default - gha-runner-compose(-base) are the public release artifacts and
@@ -56,6 +55,7 @@ jobs:
       ref: ${{ steps.resolve.outputs.ref }}
       is_release_pr: ${{ steps.resolve.outputs.is_release_pr }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
+      content_hash: ${{ steps.hash.outputs.content_hash }}
     steps:
       - name: Resolve ref to test
         id: resolve
@@ -102,6 +102,26 @@ jobs:
             echo "pr_number=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Checkout code
+        if: steps.resolve.outputs.should_run == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.resolve.outputs.ref }}
+
+      # Content-addressed instead of run-scoped: git tree/blob OIDs are
+      # already content hashes, so two runs building from identical
+      # Dockerfile/docker-build/docker-assets/runner-images-src content get
+      # the exact same hash regardless of commit history - letting every job
+      # below skip rebuilding anything whose content-tagged image already
+      # exists in gha-runner-compose-staging from a previous run.
+      - name: Compute content hash
+        id: hash
+        if: steps.resolve.outputs.should_run == 'true'
+        run: |  # shell
+          # Compute content hash
+          HASH=$( { git rev-parse HEAD:Dockerfile; git rev-parse HEAD:docker-build; git rev-parse HEAD:docker-assets; git rev-parse HEAD:runner-images-src; } | sha256sum | cut -c1-16)
+          echo "content_hash=${HASH}" >> "$GITHUB_OUTPUT"
+
   # ── BASE ──────────────────────────────────────────────────────────────────
   # Builds the OS + runner binary base image and boots a runner to validate it.
   build-test-base:
@@ -110,6 +130,8 @@ jobs:
     if: needs.check-target.outputs.should_run == 'true'
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
+    env:
+      CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-base-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -134,8 +156,9 @@ jobs:
           test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
           own-job-name: ${{ format('Build and Test Base Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: |
-            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
+            ${{ env.CONTENT_TAG }}
             ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-base-{2}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-base:
@@ -167,6 +190,9 @@ jobs:
     needs: [check-target, build-test-base]
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
+    env:
+      BASE_CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-base-${{ matrix.arch }}
+      CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-essentials-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -190,12 +216,13 @@ jobs:
           cache-scope: essentials-${{ matrix.arch }}
           runner-components: all-essentials
           additional-build-args: |
-            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
+            BASE_IMAGE=${{ env.BASE_CONTENT_TAG }}
           test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
           own-job-name: ${{ format('Build and Test Essentials Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: |
-            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+            ${{ env.CONTENT_TAG }}
             ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-essentials-{2}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-essentials:
@@ -228,6 +255,9 @@ jobs:
     needs: [check-target, build-test-essentials]
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
+    env:
+      ESSENTIALS_CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-essentials-${{ matrix.arch }}
+      CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-${{ matrix.category }}-${{ matrix.arch }}
     strategy:
       fail-fast: false
       matrix:
@@ -267,16 +297,15 @@ jobs:
           cache-scope: ${{ matrix.category }}-${{ matrix.arch }}
           runner-components: all-${{ matrix.category }}
           additional-build-args: |
-            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+            BASE_IMAGE=${{ env.ESSENTIALS_CONTENT_TAG }}
           test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
           own-job-name: ${{ format('Build and Test {0} Image ({1})', matrix.category, matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
-          # Only "build" feeds ci-large-tiers.yml's medium tier, which reuses
-          # this exact CI-run-scoped tag as its BASE_IMAGE instead of rebuilding
-          # it (see that workflow's header comment) - the other categories have
-          # nothing downstream in this run, so they skip this push entirely.
+          content-tag: ${{ env.CONTENT_TAG }}
+          # "build"'s content-tag is what ci-large-tiers.yml's medium tier
+          # reuses as its BASE_IMAGE (see that workflow's header comment).
           push-image-refs: |
-            ${{ matrix.category == 'build' && format('{0}:{1}-build-{2}', env.STAGING_IMG, env.CI_RUN_TAG, matrix.arch) || '' }}
+            ${{ env.CONTENT_TAG }}
             ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-{2}-{3}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.category, matrix.arch) || '' }}
 
   test-category:
@@ -304,11 +333,13 @@ jobs:
           uname -a
 
   # ── CLEANUP ──────────────────────────────────────────────────────────────────
-  # base/essentials/build push a CI_RUN_TAG-scoped version to gha-runner-compose-staging
-  # so the next stage in *this* run can pull it as a BASE_IMAGE, and so that GHCR layer
-  # deduplication avoids re-uploading identical layers on subsequent runs.
-  # Versions older than 7 days are pruned here; the current run's images are kept so
-  # future runs benefit from layer dedup even before the cache warms up.
+  # base/essentials/every category push a content-addressed version to
+  # gha-runner-compose-staging so the next stage can pull it as a BASE_IMAGE
+  # and so future runs with identical content skip rebuilding it entirely.
+  # Versions older than 7 days are pruned here; a content-tag that's still
+  # being reused gets its `updated_at` refreshed on every reuse (the push
+  # step re-pushes it, a cheap no-op for unchanged content), so only tags
+  # nothing has referenced in 7+ days actually get pruned.
   cleanup-ci-images:
     name: Clean up CI-run-scoped images
     needs: [check-target, build-test-base, build-test-essentials, build-test-category]

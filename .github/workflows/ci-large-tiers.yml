@@ -9,11 +9,12 @@ run-name: "CI Large Tiers - ${{ github.event_name }} - #${{ github.run_number }}
 #
 # Auto-triggers via workflow_run once ci.yml completes, reusing the "build"
 # category image ci.yml already built and pushed instead of rebuilding it -
-# gated on that SPECIFIC job's conclusion (queried via the API below), not
-# ci.yml's overall conclusion, so an unrelated category failure elsewhere in
-# that run still can't block this workflow. workflow_dispatch (manual/ad-hoc
-# runs) is the one path that builds its own base/essentials/build, since
-# there's no "parent" ci.yml run to reuse there.
+# gated on whether that content-addressed image actually exists (see
+# check-target), not on ci.yml's overall conclusion or even which specific
+# run produced it, so an unrelated category failure elsewhere in that run
+# still can't block this workflow. workflow_dispatch (manual/ad-hoc runs) is
+# the one path that builds its own base/essentials/build, since there's no
+# "parent" ci.yml run to reuse there.
 on:
   workflow_dispatch: {}
   workflow_run:
@@ -26,6 +27,9 @@ permissions:
   actions: read
 
 env:
+  # Content-tags (content-<hash>-<name>-<arch>) drive the actual build chain
+  # and reuse decisions. CI_RUN_TAG is only used as a per-run-scoped alias
+  # for the local smoke-test image and the release-PR retag source.
   CI_RUN_TAG: ci-${{ github.run_id }}
   STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
   REGISTRY: ghcr.io/${{ github.repository_owner }}
@@ -36,62 +40,38 @@ concurrency:
 
 jobs:
   # Mirrors ci.yml's fork-PR policy (see [[ci-fork-pr-policy]]) transitively:
-  # a fork PR never gets a successful "build" category job in ci.yml (that
-  # workflow skips everything for forks), so the BUILD_OK check below
+  # a fork PR never gets ci.yml to push a content-tagged "build" image (that
+  # workflow skips everything for forks), so the existence check below
   # naturally keeps this workflow off for forks too, without re-deriving
-  # fork-origin itself. Counts jobs with conclusion=="success" (not jobs
-  # whose conclusion "isn't success") - a run cancelled before its matrix
-  # even expanded has neither named job in the list at all, and "found zero
-  # non-success jobs" is vacuously true for an empty set. is_release_pr is
-  # looked up directly via the API rather than trusting workflow_run's
-  # `pull_requests` payload field, whose population conditions aren't
-  # reliably documented.
+  # fork-origin itself. Checking existence directly - rather than querying a
+  # specific ci.yml run's job conclusions - also means it doesn't matter
+  # which run (or how many) produced that content: as long as the exact
+  # content this commit would build already has a validated image in
+  # staging, there's nothing to rebuild. is_release_pr is looked up directly
+  # via the API rather than trusting workflow_run's `pull_requests` payload
+  # field, whose population conditions aren't reliably documented.
   check-target:
     name: Resolve target ref
     runs-on: ubuntu-latest
     outputs:
-      should_run: ${{ steps.resolve.outputs.should_run }}
+      should_run: ${{ steps.determine.outputs.should_run }}
       ref: ${{ steps.resolve.outputs.ref }}
       is_release_pr: ${{ steps.resolve.outputs.is_release_pr }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
-      build_ci_run_tag: ${{ steps.resolve.outputs.build_ci_run_tag }}
+      content_hash: ${{ steps.hash.outputs.content_hash }}
     steps:
       - name: Resolve ref to test
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
-          # Resolve the ref to test, and which "build" category image to
-          # chain medium off (this run's own, or ci.yml's just-built one).
+          # Resolve the ref to test
           if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            SOURCE_RUN_ID="${{ github.event.workflow_run.id }}"
             HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
-            BUILD_OK=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${SOURCE_RUN_ID}/jobs" \
-              --jq '[.jobs[] | select(.name == "Build and Test build Image (amd64)" or .name == "Build and Test build Image (arm64)") | select(.conclusion == "success")] | length')
-
-            if [[ "${BUILD_OK}" == "2" ]]; then
-              {
-                echo "should_run=true"
-                echo "ref=${{ github.event.workflow_run.head_sha }}"
-                echo "build_ci_run_tag=ci-${SOURCE_RUN_ID}"
-              } >> "$GITHUB_OUTPUT"
-            else
-              echo "ci.yml's build-category job didn't succeed (or this was a fork PR, where it never runs) - nothing to do."
-              {
-                echo "should_run=false"
-                echo "ref="
-                echo "build_ci_run_tag="
-              } >> "$GITHUB_OUTPUT"
-            fi
+            echo "ref=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
           else
-            # workflow_dispatch: manual run, always proceeds, builds its own
-            # base/essentials/build rather than depending on another run.
             HEAD_BRANCH="${{ github.ref_name }}"
-            {
-              echo "should_run=true"
-              echo "ref=${{ github.sha }}"
-              echo "build_ci_run_tag=${{ env.CI_RUN_TAG }}"
-            } >> "$GITHUB_OUTPUT"
+            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
           fi
 
           PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --head "${HEAD_BRANCH}" --base release --state open --json number --jq '.[0].number' 2>/dev/null || true)
@@ -107,12 +87,46 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.resolve.outputs.ref }}
+
+      - name: Compute content hash
+        id: hash
+        run: |  # shell
+          # Compute content hash - same formula as ci.yml, so identical
+          # content always produces the identical tag regardless of workflow.
+          HASH=$( { git rev-parse HEAD:Dockerfile; git rev-parse HEAD:docker-build; git rev-parse HEAD:docker-assets; git rev-parse HEAD:runner-images-src; } | sha256sum | cut -c1-16)
+          echo "content_hash=${HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Determine whether to proceed
+        id: determine
+        run: |  # shell
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ steps.resolve.outputs.is_release_pr }}" != "true" ]]; then
+            echo "Not a release PR - large tiers only auto-build for main -> release PRs (use workflow_dispatch otherwise)."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            BASE="${{ env.STAGING_IMG }}:content-${{ steps.hash.outputs.content_hash }}-build"
+            if docker buildx imagetools inspect "${BASE}-amd64" >/dev/null 2>&1 \
+               && docker buildx imagetools inspect "${BASE}-arm64" >/dev/null 2>&1; then
+              echo "should_run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "ci.yml hasn't produced a build-category image for this exact content yet - nothing to do."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
   # ── BASE / ESSENTIALS / BUILD (workflow_dispatch only) ──────────────────
   # Only runs for manual workflow_dispatch runs, which have no ci.yml run to
   # reuse a "build" category image from. workflow_run skips all of this and
-  # chains straight off ci.yml's own build-category image instead (see
-  # check-target's build_ci_run_tag output) - no point rebuilding what was
-  # just built.
+  # chains straight off ci.yml's own content-tagged build-category image
+  # instead - no point rebuilding what was just built. Content-tagged the
+  # same way as ci.yml, so a workflow_dispatch run on identical content
+  # reuses whatever's already in staging too, from either workflow.
   build-test-base:
     name: Build and Test Base Image (${{ matrix.arch }})
     needs: check-target
@@ -143,8 +157,9 @@ jobs:
           test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
           own-job-name: ${{ format('Build and Test Base Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-base-${{ matrix.arch }}
           push-image-refs: |
-            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
+            ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-base-${{ matrix.arch }}
 
   test-base:
     name: Test Runner (base / ${{ matrix.arch }})
@@ -193,12 +208,13 @@ jobs:
           cache-scope: essentials-${{ matrix.arch }}
           runner-components: all-essentials
           additional-build-args: |
-            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
+            BASE_IMAGE=${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-base-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
           own-job-name: ${{ format('Build and Test Essentials Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-essentials-${{ matrix.arch }}
           push-image-refs: |
-            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+            ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-essentials-${{ matrix.arch }}
 
   test-essentials:
     name: Test Runner (essentials / ${{ matrix.arch }})
@@ -246,12 +262,13 @@ jobs:
           cache-scope: build-${{ matrix.arch }}
           runner-components: all-build
           additional-build-args: |
-            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+            BASE_IMAGE=${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-essentials-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner (build / {0})', matrix.arch) }}
           own-job-name: ${{ format('Build and Test build Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-build-${{ matrix.arch }}
           push-image-refs: |
-            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}
+            ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-build-${{ matrix.arch }}
 
   test-category:
     name: Test Runner (build / ${{ matrix.arch }})
@@ -313,13 +330,14 @@ jobs:
         with:
           tier: medium
           arch: ${{ matrix.arch }}
-          base-image: ${{ env.STAGING_IMG }}:${{ needs.check-target.outputs.build_ci_run_tag }}-build-${{ matrix.arch }}
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-build-${{ matrix.arch }}
           runner-components: all-cloud,all-nodejs,all-java,all-container,all-python,all-rust
           smoke-test-cmd: "uname -a && command -v aws && command -v java && command -v python3"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
           registry: ${{ env.REGISTRY }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-${{ matrix.arch }}
           is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
           pr-number: ${{ needs.check-target.outputs.pr_number }}
 
@@ -350,13 +368,14 @@ jobs:
         with:
           tier: large
           arch: ${{ matrix.arch }}
-          base-image: ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-medium-${{ matrix.arch }}
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-${{ matrix.arch }}
           runner-components: all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases
           smoke-test-cmd: "uname -a && command -v dotnet && command -v ruby"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
           registry: ${{ env.REGISTRY }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-${{ matrix.arch }}
           is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
           pr-number: ${{ needs.check-target.outputs.pr_number }}
 
@@ -387,13 +406,14 @@ jobs:
         with:
           tier: xlarge
           arch: ${{ matrix.arch }}
-          base-image: ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-large-${{ matrix.arch }}
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-${{ matrix.arch }}
           runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium
           smoke-test-cmd: "uname -a && command -v firefox"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
           registry: ${{ env.REGISTRY }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-${{ matrix.arch }}
           is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
           pr-number: ${{ needs.check-target.outputs.pr_number }}
 
@@ -424,13 +444,14 @@ jobs:
         with:
           tier: all
           arch: ${{ matrix.arch }}
-          base-image: ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-xlarge-${{ matrix.arch }}
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-${{ matrix.arch }}
           runner-components: all
           smoke-test-cmd: "uname -a"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
           registry: ${{ env.REGISTRY }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-all-${{ matrix.arch }}
           is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
           pr-number: ${{ needs.check-target.outputs.pr_number }}
 
