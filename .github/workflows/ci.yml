@@ -103,6 +103,7 @@ jobs:
           cache-scope: base-${{ matrix.arch }}
           output-artifact-name: base-image-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
+          own-job-name: ${{ format('Build and Test Base Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           push-image-ref: ${{ needs.check-target.outputs.is_release_pr == 'true' && format('ghcr.io/{0}/gha-runner-compose-base:staging-pr{1}-{2}', github.repository_owner, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
@@ -162,6 +163,7 @@ jobs:
             BASE_IMAGE=gha-runner-compose-base:test-${{ matrix.arch }}
           output-artifact-name: essentials-image-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
+          own-job-name: ${{ format('Build and Test Essentials Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           push-image-ref: ${{ needs.check-target.outputs.is_release_pr == 'true' && format('ghcr.io/{0}/gha-runner-compose:staging-essentials-pr{1}-{2}', github.repository_owner, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
@@ -237,6 +239,7 @@ jobs:
           additional-build-args: |
             BASE_IMAGE=gha-runner-compose:essentials-test-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
+          own-job-name: ${{ format('Build and Test {0} Image ({1})', matrix.category, matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           push-image-ref: ${{ needs.check-target.outputs.is_release_pr == 'true' && format('ghcr.io/{0}/gha-runner-compose:staging-{1}-pr{2}-{3}', github.repository_owner, matrix.category, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 

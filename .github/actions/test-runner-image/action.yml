@@ -56,6 +56,10 @@ inputs:
     description: "Optional registry ref to tag and push the built image to, once the test job has succeeded"
     required: false
     default: ""
+  own-job-name:
+    description: "This build job's own workflow job name, so the orphaned-job sweep can exclude itself (a running job never sees its own conclusion)"
+    required: false
+    default: ""
 
 outputs:
   runner-name:
@@ -352,16 +356,20 @@ runs:
         # execution time once a runner picks the job up, not queue time).
         # Runs on every invocation - success or failure - so whichever build
         # job finishes last sweeps up any earlier stragglers. Only cancels
-        # once every build job in the run has reached a terminal state, so a
-        # category still actively building is never interrupted (that's what
-        # caused the mass-cancellation bug this replaced).
+        # once every OTHER build job in the run has reached a terminal state,
+        # so a category still actively building is never interrupted (that's
+        # what caused the mass-cancellation bug this replaced). This job's
+        # own entry is excluded from that check: it can never see its own
+        # conclusion while still running this step, so counting it would
+        # make the check impossible to satisfy.
         if [[ -z "${GH_TOKEN}" ]]; then
           exit 0
         fi
 
+        OWN_JOB_NAME="${{ inputs.own-job-name }}"
         ALL_JOBS=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs') || exit 0
 
-        BUILDS_PENDING=$(jq '[.[] | select((.name | startswith("Test Runner (") | not) and (.status == "queued" or .status == "in_progress") and (.conclusion == null))] | length' <<<"${ALL_JOBS}")
+        BUILDS_PENDING=$(jq --arg own "${OWN_JOB_NAME}" '[.[] | select((.name | startswith("Test Runner (") | not) and (.name != $own) and (.status == "queued" or .status == "in_progress") and (.conclusion == null))] | length' <<<"${ALL_JOBS}")
         ORPHANED_TESTS=$(jq -r '[.[] | select((.name | startswith("Test Runner (")) and (.status == "queued" or .status == "in_progress") and (.conclusion == null)) | .name]' <<<"${ALL_JOBS}")
         ORPHANED_COUNT=$(jq 'length' <<<"${ORPHANED_TESTS}")
 
