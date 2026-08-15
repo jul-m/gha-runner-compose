@@ -1,10 +1,12 @@
-name: Test Runner Images
-run-name: "Test Runner Images - ${{ github.event_name }} - #${{ github.run_number }}"
+name: CI
+run-name: "CI - ${{ github.event_name }} - #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
   pull_request:
     types: [synchronize, opened, reopened, edited]
+  push:
+    branches: [main]
   # Runs after the automated upstream-sync workflow so its bot-authored PR
   # (update-runner-images) gets tested without needing manual "Approve and
   # run" clicks: pull_request runs from github-actions[bot] require approval
@@ -49,8 +51,9 @@ jobs:
             echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
           fi
 
-  # TEST BASE IMAGE
-  build-test-base-image:
+  # ── BASE ──────────────────────────────────────────────────────────────────
+  # Builds the OS + runner binary base image and boots a runner to validate it.
+  build-test-base:
     name: Build and Test Base Image (${{ matrix.arch }})
     needs: check-target
     if: needs.check-target.outputs.should_run == 'true'
@@ -82,8 +85,11 @@ jobs:
 
   test-base:
     name: Test Runner (base / ${{ matrix.arch }})
+    needs: check-target
+    if: needs.check-target.outputs.should_run == 'true'
     runs-on: ${{ format('test-runner-base-{0}-{1}', matrix.arch, github.run_id) }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -91,17 +97,16 @@ jobs:
     steps:
       - name: Run basic test
         run: |  # shell
+          # Basic smoke test for base image
           echo "Hello from self-hosted runner (base / ${{ matrix.arch }})!"
-          echo "Runner is working correctly."
+          uname -a
 
-
-  # TEST ESSENTIALS IMAGE
-  build-test-essentials-image:
+  # ── ESSENTIALS ────────────────────────────────────────────────────────────
+  # Builds from base, adds git, gh, yq, nodejs-lite, zstd, etc.
+  build-test-essentials:
     name: Build and Test Essentials Image (${{ matrix.arch }})
+    needs: [check-target, build-test-base]
     runs-on: ${{ matrix.host-runner }}
-    needs:
-      - check-target
-      - build-test-base-image
     strategy:
       fail-fast: false
       matrix:
@@ -133,7 +138,7 @@ jobs:
 
   test-essentials:
     name: Test Runner (essentials / ${{ matrix.arch }})
-    needs: build-test-base-image
+    needs: build-test-base
     runs-on: ${{ format('test-runner-essentials-{0}-{1}', matrix.arch, github.run_id) }}
     strategy:
       fail-fast: false
@@ -144,22 +149,43 @@ jobs:
     steps:
       - name: Run basic test
         run: |  # shell
-          # Basic job test for essentials / ${{ matrix.arch }}
+          # Smoke test for essentials image
           echo "Hello from self-hosted runner (essentials / ${{ matrix.arch }})!"
-          echo "Runner is working correctly."
           uname -a
+          git --version
+          gh --version
+          yq --version
 
-
-  # TEST "BUILD" IMAGE
-  build-test-build-runner:
-    name: Start Runner (build / ${{ matrix.arch }})
-    needs:
-      - check-target
-      - build-test-essentials-image
+  # ── PARALLEL CATEGORY IMAGES ──────────────────────────────────────────────
+  # Each category (all-<category>) builds in parallel from the essentials image.
+  # Platform-specific components (x64-only) are silently skipped by the installer
+  # on arm64 — no matrix exclusions needed.
+  build-test-category:
+    name: Build and Test ${{ matrix.category }} Image (${{ matrix.arch }})
+    needs: [check-target, build-test-essentials]
     runs-on: ${{ matrix.host-runner }}
     strategy:
       fail-fast: false
       matrix:
+        category:
+          - build
+          - cloud
+          - java
+          - nodejs
+          - python
+          - container
+          - dotnet
+          - ruby
+          - rust
+          - databases
+          - browser
+          - haskell
+          - swift
+          - php
+          - web
+          - julia
+          - r
+        arch: [amd64, arm64]
         include:
           - arch: amd64
             host-runner: ubuntu-24.04
@@ -171,32 +197,49 @@ jobs:
         with:
           ref: ${{ needs.check-target.outputs.ref }}
 
-      - name: Validate "build" image (${{ matrix.arch }})
+      - name: Build ${{ matrix.category }} image (${{ matrix.arch }})
         uses: ./.github/actions/test-runner-image
         with:
           base-artifact-name: essentials-image-${{ matrix.arch }}
-          image-tag: gha-runner-compose:build-test-${{ matrix.arch }}
+          image-tag: gha-runner-compose:${{ matrix.category }}-test-${{ matrix.arch }}
           build-target: runner-build
-          runner-suffix: ${{ format('build-{0}', matrix.arch) }}
-          cache-scope: test-build-${{ matrix.arch }}
-          runner-components: all-build
-          test-job-name: ${{ format('Test Runner (build / {0})', matrix.arch) }}
+          runner-suffix: ${{ matrix.category }}-${{ matrix.arch }}
+          cache-scope: ${{ matrix.category }}-${{ matrix.arch }}
+          runner-components: all-${{ matrix.category }}
+          additional-build-args: |
+            BASE_IMAGE=gha-runner-compose:essentials-test-${{ matrix.arch }}
+          test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
 
-  test-build:
-    name: Test Runner (build / ${{ matrix.arch }})
-    needs: build-test-essentials-image
-    runs-on: ${{ format('test-runner-build-{0}-{1}', matrix.arch, github.run_id) }}
+  test-category:
+    name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
+    needs: build-test-essentials
+    runs-on: ${{ format('test-runner-{0}-{1}-{2}', matrix.category, matrix.arch, github.run_id) }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-          - arch: arm64
+        category:
+          - build
+          - cloud
+          - java
+          - nodejs
+          - python
+          - container
+          - dotnet
+          - ruby
+          - rust
+          - databases
+          - browser
+          - haskell
+          - swift
+          - php
+          - web
+          - julia
+          - r
+        arch: [amd64, arm64]
     steps:
-      - name: Run basic test
+      - name: Run smoke test
         run: |  # shell
-          # Basic job test for build / ${{ matrix.arch }}
-          echo "Hello from self-hosted runner (build / ${{ matrix.arch }})!"
-          echo "Runner is working correctly."
+          # Smoke test for ${{ matrix.category }} image
+          echo "Hello from self-hosted runner (${{ matrix.category }} / ${{ matrix.arch }})!"
           uname -a
