@@ -235,6 +235,14 @@ runs:
           sleep 10
         done
 
+    - name: Log in to GHCR (image push)
+      if: inputs.push-image-refs != ''
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
+
     - name: Push tested image to registry
       if: inputs.push-image-refs != ''
       shell: bash
@@ -242,7 +250,12 @@ runs:
         # Push tested image to registry under each given ref (one per line):
         # a CI-run-scoped ref other jobs in this run pull as their BASE_IMAGE
         # (replacing the old artifact save/upload/download/load round trip),
-        # and, on release PRs, an additional PR-scoped staging ref.
+        # and, on release PRs, an additional PR-scoped staging ref. Uses
+        # inputs.github-token (the elevated PAT), not the ephemeral
+        # github.token used for the build cache above: gha-runner-compose(-base)
+        # predate this workflow and their GHCR "Manage Actions access" grant
+        # doesn't cover the default token, unlike gha-runner-compose-cache
+        # which this workflow created (and so auto-linked write access to).
         while IFS= read -r REF; do
           [[ -z "${REF}" ]] && continue
           docker tag "${IMAGE_TAG}" "${REF}"

@@ -347,7 +347,11 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ github.token }}
+          # gha-runner-compose predates this workflow and its GHCR "Manage
+          # Actions access" grant doesn't cover the default github.token (see
+          # the composite action's "Log in to GHCR (image push)" step for the
+          # same issue and why the fix is switching tokens, not scopes).
+          password: ${{ secrets.ACTION_GH_TOKEN }}
 
       - name: Build and smoke-test medium image
         env:
