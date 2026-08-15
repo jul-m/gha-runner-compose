@@ -153,7 +153,9 @@ jobs:
   # TEST "BUILD" IMAGE
   build-test-build-runner:
     name: Start Runner (build / ${{ matrix.arch }})
-    needs: build-test-essentials-image
+    needs:
+      - check-target
+      - build-test-essentials-image
     runs-on: ${{ matrix.host-runner }}
     strategy:
       fail-fast: false
@@ -166,7 +168,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-        
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
       - name: Validate "build" image (${{ matrix.arch }})
         uses: ./.github/actions/test-runner-image
         with:
