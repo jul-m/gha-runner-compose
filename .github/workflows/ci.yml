@@ -35,6 +35,11 @@ env:
   # confirmed: `docker pull` on a cache-scope tag fails with "mismatched image
   # rootfs and manifest layers"). Cleaned up by the cleanup-ci-images job.
   CI_RUN_TAG: ci-${{ github.run_id }}
+  # Everything transient (intra-run hand-off, release-PR staging) lives in this
+  # package, which this workflow creates and therefore has write access to by
+  # default - gha-runner-compose(-base) are the public release artifacts and
+  # must only ever be written by publish-release.yml, at an actual release.
+  STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
 
 # Concurrent runs on the same ref would race writes to the same GHCR cache
 # tag per scope (and, for release PRs, the same staging image tag) - cancel
@@ -149,8 +154,8 @@ jobs:
           own-job-name: ${{ format('Build and Test Base Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           push-image-refs: |
-            ghcr.io/${{ github.repository_owner }}/gha-runner-compose-base:${{ env.CI_RUN_TAG }}-${{ matrix.arch }}
-            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('ghcr.io/{0}/gha-runner-compose-base:staging-pr{1}-{2}', github.repository_owner, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
+            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
+            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-base-{2}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-base:
     name: Test Runner (base / ${{ matrix.arch }})
@@ -204,13 +209,13 @@ jobs:
           cache-scope: essentials-${{ matrix.arch }}
           runner-components: all-essentials
           additional-build-args: |
-            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/gha-runner-compose-base:${{ env.CI_RUN_TAG }}-${{ matrix.arch }}
+            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
           own-job-name: ${{ format('Build and Test Essentials Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           push-image-refs: |
-            ghcr.io/${{ github.repository_owner }}/gha-runner-compose:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
-            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('ghcr.io/{0}/gha-runner-compose:staging-essentials-pr{1}-{2}', github.repository_owner, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
+            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-essentials-{2}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-essentials:
     name: Test Runner (essentials / ${{ matrix.arch }})
@@ -281,15 +286,15 @@ jobs:
           cache-scope: ${{ matrix.category }}-${{ matrix.arch }}
           runner-components: all-${{ matrix.category }}
           additional-build-args: |
-            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/gha-runner-compose:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
           own-job-name: ${{ format('Build and Test {0} Image ({1})', matrix.category, matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           # Only "build" feeds the medium/large/xlarge/all chain (see build-test-large-tiers) - the other
           # categories have nothing downstream in this run, so they skip the CI-run-scoped push entirely.
           push-image-refs: |
-            ${{ matrix.category == 'build' && format('ghcr.io/{0}/gha-runner-compose:{1}-build-{2}', github.repository_owner, env.CI_RUN_TAG, matrix.arch) || '' }}
-            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('ghcr.io/{0}/gha-runner-compose:staging-{1}-pr{2}-{3}', github.repository_owner, matrix.category, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
+            ${{ matrix.category == 'build' && format('{0}:{1}-build-{2}', env.STAGING_IMG, env.CI_RUN_TAG, matrix.arch) || '' }}
+            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-{2}-{3}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.category, matrix.arch) || '' }}
 
   test-category:
     name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
@@ -356,7 +361,7 @@ jobs:
           # Build medium on top of the "build" category image (pulled directly from
           # GHCR as the BASE_IMAGE - already built and tested by build-test-category)
           docker buildx build --platform "${PLATFORM}" --target runner-build --load \
-            --build-arg "BASE_IMAGE=${REGISTRY}/gha-runner-compose:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}" \
+            --build-arg "BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}" \
             --build-arg RUNNER_COMPONENTS=all-cloud,all-nodejs,all-java,all-container,all-python,all-rust \
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:medium-${{ matrix.arch }}" \
             --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:medium-${{ matrix.arch }},mode=max" \
@@ -413,8 +418,8 @@ jobs:
           # these to the release tag once the PR is merged, no rebuild needed.
           for TIER in medium large xlarge all; do
             docker tag "gha-runner-compose:${TIER}-test-${{ matrix.arch }}" \
-              "${REGISTRY}/gha-runner-compose:staging-${TIER}-pr${{ needs.check-target.outputs.pr_number }}-${{ matrix.arch }}"
-            docker push "${REGISTRY}/gha-runner-compose:staging-${TIER}-pr${{ needs.check-target.outputs.pr_number }}-${{ matrix.arch }}"
+              "${{ env.STAGING_IMG }}:pr${{ needs.check-target.outputs.pr_number }}-${TIER}-${{ matrix.arch }}"
+            docker push "${{ env.STAGING_IMG }}:pr${{ needs.check-target.outputs.pr_number }}-${TIER}-${{ matrix.arch }}"
           done
 
       - name: Clean up local images
@@ -422,7 +427,7 @@ jobs:
         run: |  # shell
           # Free disk on the self-hosted runner for the next run
           docker rmi -f \
-            "${REGISTRY}/gha-runner-compose:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}" \
+            "${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}" \
             "gha-runner-compose:medium-test-${{ matrix.arch }}" \
             "gha-runner-compose:large-test-${{ matrix.arch }}" \
             "gha-runner-compose:xlarge-test-${{ matrix.arch }}" \
@@ -430,9 +435,9 @@ jobs:
             2>/dev/null || true
 
   # ── CLEANUP ──────────────────────────────────────────────────────────────────
-  # base/essentials/build push a CI_RUN_TAG-scoped GHCR version purely so the
-  # next stage in *this* run can pull it as a BASE_IMAGE - once every consumer
-  # has finished (or failed), that version has no further purpose.
+  # base/essentials/build push a CI_RUN_TAG-scoped version to gha-runner-compose-staging
+  # purely so the next stage in *this* run can pull it as a BASE_IMAGE - once every
+  # consumer has finished (or failed), that version has no further purpose.
   cleanup-ci-images:
     name: Clean up CI-run-scoped images
     needs: [check-target, build-test-base, build-test-essentials, build-test-category, build-test-large-tiers]
@@ -441,24 +446,16 @@ jobs:
     steps:
       - name: Delete run-scoped GHCR versions
         env:
-          GH_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
-          # Best-effort: package-version deletion needs more than packages:write
-          # on a personal-account-owned package (admin rights on the package),
-          # so this may need ACTION_GH_TOKEN to carry a broader scope than the
-          # default GITHUB_TOKEN provides. A failure here just means the
-          # run-scoped tags accumulate until manually pruned - not fatal.
-          if [[ -z "${GH_TOKEN}" ]]; then
-            echo "ℹ️ No token available; skipping cleanup."
-            exit 0
-          fi
-
-          for PACKAGE in gha-runner-compose-base gha-runner-compose; do
-            VERSION_IDS=$(gh api --paginate "/user/packages/container/${PACKAGE}/versions" \
-              --jq ".[] | select(.metadata.container.tags[]? | startswith(\"${{ env.CI_RUN_TAG }}-\")) | .id" 2>/dev/null || true)
-            for ID in ${VERSION_IDS}; do
-              echo "Deleting ${PACKAGE} version ${ID}"
-              gh api --method DELETE "/user/packages/container/${PACKAGE}/versions/${ID}" 2>/dev/null \
-                || echo "  ⚠️ Failed to delete ${PACKAGE} version ${ID} (likely a permissions gap, see comment above)."
-            done
+          # gha-runner-compose-staging is created by this workflow (via the
+          # default token), which auto-grants this repo admin rights on it -
+          # unlike gha-runner-compose(-base), which this workflow never
+          # writes to at all now, so no permission gap to work around here.
+          VERSION_IDS=$(gh api --paginate "/user/packages/container/gha-runner-compose-staging/versions" \
+            --jq ".[] | select(.metadata.container.tags[]? | startswith(\"${{ env.CI_RUN_TAG }}-\")) | .id" 2>/dev/null || true)
+          for ID in ${VERSION_IDS}; do
+            echo "Deleting gha-runner-compose-staging version ${ID}"
+            gh api --method DELETE "/user/packages/container/gha-runner-compose-staging/versions/${ID}" 2>/dev/null \
+              || echo "  ⚠️ Failed to delete version ${ID}."
           done

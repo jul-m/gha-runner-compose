@@ -18,8 +18,11 @@ permissions:
 
 env:
   REGISTRY: ghcr.io/${{ github.repository_owner }}
+  # The only writer to these two: everything transient (release-PR staging,
+  # intra-run hand-off) lives in gha-runner-compose-staging instead (see ci.yml).
   BASE_IMG_NAME: gha-runner-compose-base:u24.04
   RUNNER_IMG_NAME: gha-runner-compose:u24.04
+  STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
   # Matches ci.yml's build-test-category matrix (see tools/prebuilt-images.csv).
   PUBLISHED_CATEGORIES: build cloud java nodejs python container dotnet
   # Matches ci.yml's build-test-large-tiers job. A same-repo main -> release PR
@@ -72,8 +75,8 @@ jobs:
           # Combine the amd64/arm64 staging tags into one multi-arch manifest
           docker buildx imagetools create \
             --tag "${REGISTRY}/${BASE_IMG_NAME}-${TAG}" \
-            "${REGISTRY}/gha-runner-compose-base:staging-pr${PR_NUMBER}-amd64" \
-            "${REGISTRY}/gha-runner-compose-base:staging-pr${PR_NUMBER}-arm64"
+            "${STAGING_IMG}:pr${PR_NUMBER}-base-amd64" \
+            "${STAGING_IMG}:pr${PR_NUMBER}-base-arm64"
 
       - name: Promote essentials and category images
         env:
@@ -85,8 +88,8 @@ jobs:
             echo "Promoting ${SHORT}"
             docker buildx imagetools create \
               --tag "${REGISTRY}/${RUNNER_IMG_NAME}-${SHORT}-${TAG}" \
-              "${REGISTRY}/gha-runner-compose:staging-${SHORT}-pr${PR_NUMBER}-amd64" \
-              "${REGISTRY}/gha-runner-compose:staging-${SHORT}-pr${PR_NUMBER}-arm64"
+              "${STAGING_IMG}:pr${PR_NUMBER}-${SHORT}-amd64" \
+              "${STAGING_IMG}:pr${PR_NUMBER}-${SHORT}-arm64"
           done
 
       - name: Tag release and open prerelease
