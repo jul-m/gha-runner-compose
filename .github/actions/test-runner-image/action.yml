@@ -32,14 +32,6 @@ inputs:
     description: "Token used by gh CLI to manage the runner lifecycle and check workflow job status"
     required: false
     default: ""
-  base-artifact-name:
-    description: "Optional artifact (tar.gz) containing a base image to load before building"
-    required: false
-    default: ""
-  output-artifact-name:
-    description: "Optional artifact name used to upload the built image as tar.gz"
-    required: false
-    default: ""
   cache-scope:
     description: "Cache scope identifier used for docker build cache segregation"
     required: false
@@ -52,8 +44,8 @@ inputs:
     description: "Set to 'true' to skip runner start/wait/cleanup steps"
     required: false
     default: "false"
-  push-image-ref:
-    description: "Optional registry ref to tag and push the built image to, once the test job has succeeded"
+  push-image-refs:
+    description: "Optional newline-separated registry refs to tag and push the built image to, once the test job has succeeded"
     required: false
     default: ""
   own-job-name:
@@ -112,20 +104,6 @@ runs:
     - name: Set up Docker
       uses: docker/setup-docker-action@v4
 
-    - name: Download base image artifact
-      if: inputs.base-artifact-name != ''
-      uses: actions/download-artifact@v4
-      with:
-        name: ${{ inputs.base-artifact-name }}
-
-    - name: Load base image
-      if: inputs.base-artifact-name != ''
-      shell: bash
-      run: |  # shell
-        # Load base image from artifact
-        gunzip -c "${{ inputs.base-artifact-name }}.tar.gz" | docker load
-        docker image ls
-
     - name: Set up Buildx (docker driver for local base image)
       id: buildx
       uses: docker/setup-buildx-action@v3
@@ -161,21 +139,6 @@ runs:
           ${{ inputs.additional-build-args }}
         secrets: |
           id=GITHUB_TOKEN,env=GITHUB_TOKEN
-
-    - name: Save image as artifact
-      if: inputs.output-artifact-name != ''
-      shell: bash
-      run: |  # shell
-        # Save runner image as compressed tar artifact
-        docker save "${IMAGE_TAG}" | gzip > "${{ inputs.output-artifact-name }}.tar.gz"
-
-    - name: Upload image artifact
-      if: inputs.output-artifact-name != ''
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ inputs.output-artifact-name }}
-        path: ${{ inputs.output-artifact-name }}.tar.gz
-        retention-days: 1
 
     - name: Verify image was built
       shell: bash
@@ -273,12 +236,18 @@ runs:
         done
 
     - name: Push tested image to registry
-      if: inputs.push-image-ref != ''
+      if: inputs.push-image-refs != ''
       shell: bash
       run: |  # shell
-        # Push tested image to registry under the given ref
-        docker tag "${IMAGE_TAG}" "${{ inputs.push-image-ref }}"
-        docker push "${{ inputs.push-image-ref }}"
+        # Push tested image to registry under each given ref (one per line):
+        # a CI-run-scoped ref other jobs in this run pull as their BASE_IMAGE
+        # (replacing the old artifact save/upload/download/load round trip),
+        # and, on release PRs, an additional PR-scoped staging ref.
+        while IFS= read -r REF; do
+          [[ -z "${REF}" ]] && continue
+          docker tag "${IMAGE_TAG}" "${REF}"
+          docker push "${REF}"
+        done <<< "${{ inputs.push-image-refs }}"
 
     - name: Cleanup runner
       if: always() && inputs.skip-runner != 'true'
