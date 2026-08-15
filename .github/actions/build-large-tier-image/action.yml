@@ -42,6 +42,10 @@ inputs:
     description: "PR number used for the release-PR staging tag (required when is-release-pr is true)"
     required: false
     default: ""
+  content-tag:
+    description: "Full content-addressed registry ref (e.g. staging:content-<hash>-medium-amd64). If it already exists, skip the rebuild and pull it instead - still re-smoke-tested below either way."
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -70,7 +74,23 @@ runs:
             --config tools/buildkitd.toml \
             --bootstrap
 
+    - name: Check for reusable content-tagged image
+      if: inputs.content-tag != ''
+      id: check-reuse
+      shell: bash
+      run: |  # shell
+        # If this exact content already built successfully before, skip the
+        # expensive rebuild and pull the existing image instead - it still
+        # gets re-smoke-tested below like any other build.
+        if docker buildx imagetools inspect "${{ inputs.content-tag }}" >/dev/null 2>&1; then
+          echo "Reusing ${{ inputs.content-tag }} - content unchanged since it was last built."
+          echo "reused=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "reused=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Build, push and load ${{ inputs.tier }} image (${{ inputs.arch }})
+      if: steps.check-reuse.outputs.reused != 'true'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -82,6 +102,12 @@ runs:
         # that the docker-container driver supports this dual-output combo and
         # that `type=docker` really lands in the host daemon (bind-mounted
         # /var/run/docker.sock), not just the builder's own internal store.
+        # Also tags the content-addressed ref in the same push, when given -
+        # so future runs with identical content can skip rebuilding this tier.
+        TAGS=(-t "${IMAGE_REF}")
+        if [[ -n "${{ inputs.content-tag }}" ]]; then
+          TAGS+=(-t "${{ inputs.content-tag }}")
+        fi
         docker buildx build --builder "${{ inputs.builder-name }}" --platform "${PLATFORM}" --target runner-build \
           --build-arg "BASE_IMAGE=${{ inputs.base-image }}" \
           --build-arg "RUNNER_COMPONENTS=${{ inputs.runner-components }}" \
@@ -89,7 +115,15 @@ runs:
           --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
           --output type=registry \
           --output type=docker \
-          -t "${IMAGE_REF}" .
+          "${TAGS[@]}" .
+
+    - name: Pull reused content-tagged image
+      if: steps.check-reuse.outputs.reused == 'true'
+      shell: bash
+      run: |  # shell
+        # Pull reused content-tagged image
+        docker pull --platform "${PLATFORM}" "${{ inputs.content-tag }}"
+        docker tag "${{ inputs.content-tag }}" "${IMAGE_REF}"
 
     - name: Smoke-test ${{ inputs.tier }} image (${{ inputs.arch }})
       shell: bash

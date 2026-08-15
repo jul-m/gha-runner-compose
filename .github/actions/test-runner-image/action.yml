@@ -52,6 +52,10 @@ inputs:
     description: "This build job's own workflow job name, so the orphaned-job sweep can exclude itself (a running job never sees its own conclusion)"
     required: false
     default: ""
+  content-tag:
+    description: "Full content-addressed registry ref (e.g. staging:content-<hash>-base-amd64). If it already exists, skip the rebuild and pull it instead - the image still gets re-tested below either way, just without paying for docker build again."
+    required: false
+    default: ""
 
 outputs:
   runner-name:
@@ -63,6 +67,9 @@ outputs:
   container-name:
     description: "Docker container name used for the temporary runner"
     value: ${{ steps.setup-context.outputs.container_name }}
+  reused:
+    description: "'true' if an existing content-tagged image was reused instead of rebuilding"
+    value: ${{ steps.check-reuse.outputs.reused }}
 
 runs:
   using: "composite"
@@ -119,8 +126,25 @@ runs:
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
+    - name: Check for reusable content-tagged image
+      if: inputs.content-tag != ''
+      id: check-reuse
+      shell: bash
+      run: |  # shell
+        # If this exact content (Dockerfile/docker-build/docker-assets/
+        # runner-images-src) already built successfully before, skip the
+        # expensive rebuild and pull the existing image instead - it still
+        # gets re-tested below like any other build, just without paying
+        # for docker build again.
+        if docker buildx imagetools inspect "${{ inputs.content-tag }}" >/dev/null 2>&1; then
+          echo "Reusing ${{ inputs.content-tag }} - content unchanged since it was last built."
+          echo "reused=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "reused=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Build image
-      if: inputs.skip-build != 'true'
+      if: inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
       uses: docker/build-push-action@v6
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -139,6 +163,14 @@ runs:
           ${{ inputs.additional-build-args }}
         secrets: |
           id=GITHUB_TOKEN,env=GITHUB_TOKEN
+
+    - name: Pull reused content-tagged image
+      if: steps.check-reuse.outputs.reused == 'true'
+      shell: bash
+      run: |  # shell
+        # Pull reused content-tagged image
+        docker pull "${{ inputs.content-tag }}"
+        docker tag "${{ inputs.content-tag }}" "${IMAGE_TAG}"
 
     - name: Verify image was built
       shell: bash
@@ -240,9 +272,11 @@ runs:
       shell: bash
       run: |  # shell
         # Push tested image to registry under each given ref (one per line):
-        # a CI-run-scoped ref other jobs in this run pull as their BASE_IMAGE
-        # (replacing the old artifact save/upload/download/load round trip),
-        # and, on release PRs, an additional PR-scoped staging ref.
+        # a CI-run-scoped ref other jobs in this run pull as their BASE_IMAGE,
+        # the content-addressed ref future runs check to skip rebuilding this
+        # exact content, and, on release PRs, an additional PR-scoped ref.
+        # Pushing the content-tag again when reused is a cheap no-op (same
+        # digest already there).
         while IFS= read -r REF; do
           [[ -z "${REF}" ]] && continue
           docker tag "${IMAGE_TAG}" "${REF}"
