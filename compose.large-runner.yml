@@ -1,0 +1,37 @@
+name: gha-runner-compose-large-runner
+
+# Self-hosted runner for the build-test-large-tiers CI job.
+# Requires the image to be built first:
+#   docker build \
+#     --build-arg BASE_IMAGE=ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest \
+#     --build-arg RUNNER_COMPONENTS=docker \
+#     --target runner-build \
+#     -t gha-runner-compose-large-images:local .
+#
+# Then create .env.large-runner with:
+#   RUNNER_REPO_URL=https://github.com/jul-m/gha-runner-compose
+#   RUNNER_TOKEN=<registration_token>   # gh api -X POST repos/jul-m/gha-runner-compose/actions/runners/registration-token --jq '.token'
+#   RUNNER_LABELS=gha-runner-compose-large-images
+#
+# Start with: docker compose -f compose.large-runner.yml up -d
+
+services:
+  gha-large-runner:
+    image: gha-runner-compose-large-images:local
+    container_name: gha-large-runner
+    env_file:
+      - .env.large-runner
+    environment:
+      - RUNNER_NAME=gha-large-runner-mac
+    # On macOS (Docker Desktop), the socket inside the container is owned root:root (GID 0).
+    # Adding GID 0 lets the runner user (in group docker) reach it via the group rw bit.
+    group_add:
+      - "0"
+    volumes:
+      # Persist runner registration (long-term credentials survive restarts)
+      - gha-large-runner_gh-runner:/opt/actions-runner
+      # Socket passthrough: lets the runner invoke docker/buildx on the host Docker engine
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  gha-large-runner_gh-runner:

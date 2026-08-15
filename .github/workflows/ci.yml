@@ -364,7 +364,7 @@ jobs:
             --build-arg "BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}" \
             --build-arg RUNNER_COMPONENTS=all-cloud,all-nodejs,all-java,all-container,all-python,all-rust \
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:medium-${{ matrix.arch }}" \
-            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:medium-${{ matrix.arch }},mode=max" \
+            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:medium-${{ matrix.arch }},mode=max,compression=zstd,compression-level=3" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             -t gha-runner-compose:medium-test-${{ matrix.arch }} .
           docker run --rm --entrypoint bash gha-runner-compose:medium-test-${{ matrix.arch }} -c 'uname -a && command -v aws && command -v java && command -v python3'
@@ -378,7 +378,7 @@ jobs:
             --build-arg BASE_IMAGE=gha-runner-compose:medium-test-${{ matrix.arch }} \
             --build-arg RUNNER_COMPONENTS=all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases \
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:large-${{ matrix.arch }}" \
-            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:large-${{ matrix.arch }},mode=max" \
+            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:large-${{ matrix.arch }},mode=max,compression=zstd,compression-level=3" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             -t gha-runner-compose:large-test-${{ matrix.arch }} .
           docker run --rm --entrypoint bash gha-runner-compose:large-test-${{ matrix.arch }} -c 'uname -a && command -v dotnet && command -v ruby'
@@ -392,7 +392,7 @@ jobs:
             --build-arg BASE_IMAGE=gha-runner-compose:large-test-${{ matrix.arch }} \
             --build-arg RUNNER_COMPONENTS=all-swift,actions-cache,codeql-bundle,firefox,selenium \
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:xlarge-${{ matrix.arch }}" \
-            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:xlarge-${{ matrix.arch }},mode=max" \
+            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:xlarge-${{ matrix.arch }},mode=max,compression=zstd,compression-level=3" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             -t gha-runner-compose:xlarge-test-${{ matrix.arch }} .
           docker run --rm --entrypoint bash gha-runner-compose:xlarge-test-${{ matrix.arch }} -c 'uname -a && command -v firefox'
@@ -406,7 +406,7 @@ jobs:
             --build-arg BASE_IMAGE=gha-runner-compose:xlarge-test-${{ matrix.arch }} \
             --build-arg RUNNER_COMPONENTS=all \
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:all-${{ matrix.arch }}" \
-            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:all-${{ matrix.arch }},mode=max" \
+            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:all-${{ matrix.arch }},mode=max,compression=zstd,compression-level=3" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             -t gha-runner-compose:all-test-${{ matrix.arch }} .
           docker run --rm --entrypoint bash gha-runner-compose:all-test-${{ matrix.arch }} -c 'uname -a'
@@ -436,15 +436,17 @@ jobs:
 
   # ── CLEANUP ──────────────────────────────────────────────────────────────────
   # base/essentials/build push a CI_RUN_TAG-scoped version to gha-runner-compose-staging
-  # purely so the next stage in *this* run can pull it as a BASE_IMAGE - once every
-  # consumer has finished (or failed), that version has no further purpose.
+  # so the next stage in *this* run can pull it as a BASE_IMAGE, and so that GHCR layer
+  # deduplication avoids re-uploading identical layers on subsequent runs.
+  # Versions older than 7 days are pruned here; the current run's images are kept so
+  # future runs benefit from layer dedup even before the cache warms up.
   cleanup-ci-images:
     name: Clean up CI-run-scoped images
     needs: [check-target, build-test-base, build-test-essentials, build-test-category, build-test-large-tiers]
     if: always() && needs.check-target.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
-      - name: Delete run-scoped GHCR versions
+      - name: Delete staging versions older than 7 days
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
@@ -452,10 +454,18 @@ jobs:
           # default token), which auto-grants this repo admin rights on it -
           # unlike gha-runner-compose(-base), which this workflow never
           # writes to at all now, so no permission gap to work around here.
+          #
+          # Keep images for 7 days: GHCR layer deduplication (content-addressable
+          # blobs) means subsequent runs skip re-uploading layers already present
+          # in the registry, even under a different tag/run ID.
+          CUTOFF=$(date -u -d '7 days ago' +%s 2>/dev/null || date -u -v-7d +%s)
           VERSION_IDS=$(gh api --paginate "/user/packages/container/gha-runner-compose-staging/versions" \
-            --jq ".[] | select(.metadata.container.tags[]? | startswith(\"${{ env.CI_RUN_TAG }}-\")) | .id" 2>/dev/null || true)
+            --jq ".[] | select((.updated_at | fromdateiso8601) < ${CUTOFF}) | .id" 2>/dev/null || true)
+          if [ -z "${VERSION_IDS}" ]; then
+            echo "No staging versions older than 7 days to delete."
+          fi
           for ID in ${VERSION_IDS}; do
-            echo "Deleting gha-runner-compose-staging version ${ID}"
+            echo "Deleting gha-runner-compose-staging version ${ID} (older than 7 days)"
             gh api --method DELETE "/user/packages/container/gha-runner-compose-staging/versions/${ID}" 2>/dev/null \
               || echo "  ⚠️ Failed to delete version ${ID}."
           done
