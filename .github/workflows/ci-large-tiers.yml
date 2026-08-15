@@ -278,7 +278,13 @@ jobs:
   build-tier-medium:
     name: Build and Test medium Tier (${{ matrix.arch }})
     needs: [check-target, build-test-category]
-    if: needs.check-target.outputs.should_run == 'true'
+    # build-test-category is legitimately skipped on the workflow_run path
+    # (it only runs for workflow_dispatch) - a plain `if:` gets implicitly
+    # ANDed with success() by GitHub unless it calls always()/failure()/
+    # cancelled() itself, and success() is false when a needed job was
+    # skipped, not just when it failed. always() bypasses that, then the
+    # explicit checks below restore real failure-blocking.
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled'
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 90
     strategy:
