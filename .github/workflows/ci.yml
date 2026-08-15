@@ -2,13 +2,7 @@ name: CI
 run-name: "CI - ${{ github.event_name }} - #${{ github.run_number }}"
 
 on:
-  workflow_dispatch:
-    inputs:
-      build_large_tiers:
-        description: 'Also build/test medium, large, xlarge, all (needs the self-hosted runner - see docs/building.md)'
-        required: false
-        type: boolean
-        default: false
+  workflow_dispatch: {}
   pull_request:
     types: [synchronize, opened, reopened, edited]
   push:
@@ -62,7 +56,6 @@ jobs:
       ref: ${{ steps.resolve.outputs.ref }}
       is_release_pr: ${{ steps.resolve.outputs.is_release_pr }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
-      should_build_large_tiers: ${{ steps.resolve.outputs.should_build_large_tiers }}
     steps:
       - name: Resolve ref to test
         id: resolve
@@ -107,18 +100,6 @@ jobs:
           else
             echo "is_release_pr=false" >> "$GITHUB_OUTPUT"
             echo "pr_number=" >> "$GITHUB_OUTPUT"
-          fi
-
-          # medium/large/xlarge/all are tens of GB uncompressed - far beyond the
-          # 14GB disk on standard GitHub-hosted runners - so they only build on
-          # the self-hosted runner, and only when explicitly requested (manual
-          # workflow_dispatch toggle) or required (a same-repo main -> release
-          # PR, which must validate everything before promoting a release).
-          if [[ "${{ github.event.inputs.build_large_tiers }}" == "true" || "${{ github.event.pull_request.base.ref }}" == "release" ]] \
-             && [[ "${{ github.event_name }}" != "pull_request" || "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
-            echo "should_build_large_tiers=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_build_large_tiers=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ── BASE ──────────────────────────────────────────────────────────────────
@@ -290,10 +271,10 @@ jobs:
           test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
           own-job-name: ${{ format('Build and Test {0} Image ({1})', matrix.category, matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
-          # Only "build" feeds the medium/large/xlarge/all chain (see build-test-large-tiers) - the other
-          # categories have nothing downstream in this run, so they skip the CI-run-scoped push entirely.
+          # ci-large-tiers.yml builds its own "build" category image rather than
+          # depending on this one (see its header comment) - nothing in this run
+          # consumes a category image downstream, so no CI-run-scoped push here.
           push-image-refs: |
-            ${{ matrix.category == 'build' && format('{0}:{1}-build-{2}', env.STAGING_IMG, env.CI_RUN_TAG, matrix.arch) || '' }}
             ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-{2}-{3}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.category, matrix.arch) || '' }}
 
   test-category:
@@ -320,140 +301,6 @@ jobs:
           echo "Hello from self-hosted runner (${{ matrix.category }} / ${{ matrix.arch }})!"
           uname -a
 
-  # ── LARGE TIERS (medium/large/xlarge/all) ───────────────────────────────────
-  # These are 20-62GB uncompressed - far beyond the 14GB disk on standard
-  # GitHub-hosted runners - so they only run on a self-hosted runner, and only
-  # when explicitly requested or required (see should_build_large_tiers above).
-  # Each tier builds from the previous tier's local image directly (no
-  # inter-job artifact hand-off): they're all sequential steps in one job per
-  # arch, so the self-hosted runner's own Docker image store carries state
-  # from one step to the next.
-  build-test-large-tiers:
-    name: Build and Test Large Tiers (${{ matrix.arch }})
-    needs: [check-target, build-test-category]
-    if: needs.check-target.outputs.should_build_large_tiers == 'true'
-    runs-on: [self-hosted, gha-runner-compose-large-images]
-    timeout-minutes: 300
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
-    env:
-      REGISTRY: ghcr.io/${{ github.repository_owner }}
-      PLATFORM: linux/${{ matrix.arch }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.check-target.outputs.ref }}
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Set up persistent BuildKit builder and local registry
-        run: |  # shell
-          # Persistent docker-container builder: internal cache survives between runs
-          # (no --cache-to needed). --cache-from GHCR is used as fallback on cold cache.
-          docker buildx inspect gha-large-runner-builder >/dev/null 2>&1 || \
-            docker buildx create \
-              --name gha-large-runner-builder \
-              --driver docker-container \
-              --driver-opt network=host \
-              --config tools/buildkitd.toml \
-              --bootstrap
-          # Local registry on port 5001 for inter-tier image hand-off: the
-          # docker-container builder can't access the host's local Docker store,
-          # but it can push/pull from localhost:5001 (network=host) which is
-          # already configured as insecure in tools/buildkitd.toml.
-          # Stopped and removed in the cleanup step at the end of the job.
-          docker stop local-registry-ci 2>/dev/null || true
-          docker rm   local-registry-ci 2>/dev/null || true
-          docker run -d --name local-registry-ci -p 5001:5000 registry:2
-
-      - name: Build and smoke-test medium image
-        env:
-          GITHUB_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
-        run: |  # shell
-          # Build medium on top of the "build" category image (pulled directly from
-          # GHCR as the BASE_IMAGE - already built and tested by build-test-category).
-          # Push to the local registry so the docker-container builder can reference
-          # it as BASE_IMAGE in the next tier (it can't access the local Docker store).
-          docker buildx build --builder gha-large-runner-builder --platform "${PLATFORM}" --target runner-build \
-            --build-arg "BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}" \
-            --build-arg RUNNER_COMPONENTS=all-cloud,all-nodejs,all-java,all-container,all-python,all-rust \
-            --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:medium-${{ matrix.arch }}" \
-            --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
-            --push -t localhost:5001/gha-runner-compose:medium-test-${{ matrix.arch }} .
-          docker run --rm --platform "${PLATFORM}" --entrypoint bash localhost:5001/gha-runner-compose:medium-test-${{ matrix.arch }} -c 'uname -a && command -v aws && command -v java && command -v python3'
-
-      - name: Build and smoke-test large image
-        env:
-          GITHUB_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
-        run: |  # shell
-          # Build large on top of medium (pulled from local registry)
-          docker buildx build --builder gha-large-runner-builder --platform "${PLATFORM}" --target runner-build \
-            --build-arg BASE_IMAGE=localhost:5001/gha-runner-compose:medium-test-${{ matrix.arch }} \
-            --build-arg RUNNER_COMPONENTS=all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases \
-            --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:large-${{ matrix.arch }}" \
-            --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
-            --push -t localhost:5001/gha-runner-compose:large-test-${{ matrix.arch }} .
-          docker run --rm --platform "${PLATFORM}" --entrypoint bash localhost:5001/gha-runner-compose:large-test-${{ matrix.arch }} -c 'uname -a && command -v dotnet && command -v ruby'
-
-      - name: Build and smoke-test xlarge image
-        env:
-          GITHUB_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
-        run: |  # shell
-          # Build xlarge on top of large (pulled from local registry)
-          docker buildx build --builder gha-large-runner-builder --platform "${PLATFORM}" --target runner-build \
-            --build-arg BASE_IMAGE=localhost:5001/gha-runner-compose:large-test-${{ matrix.arch }} \
-            --build-arg RUNNER_COMPONENTS=all-swift,actions-cache,codeql-bundle,firefox,selenium \
-            --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:xlarge-${{ matrix.arch }}" \
-            --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
-            --push -t localhost:5001/gha-runner-compose:xlarge-test-${{ matrix.arch }} .
-          docker run --rm --platform "${PLATFORM}" --entrypoint bash localhost:5001/gha-runner-compose:xlarge-test-${{ matrix.arch }} -c 'uname -a && command -v firefox'
-
-      - name: Build and smoke-test all image
-        env:
-          GITHUB_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
-        run: |  # shell
-          # Build all (every remaining component) on top of xlarge (pulled from local registry)
-          docker buildx build --builder gha-large-runner-builder --platform "${PLATFORM}" --target runner-build \
-            --build-arg BASE_IMAGE=localhost:5001/gha-runner-compose:xlarge-test-${{ matrix.arch }} \
-            --build-arg RUNNER_COMPONENTS=all \
-            --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:all-${{ matrix.arch }}" \
-            --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
-            --push -t localhost:5001/gha-runner-compose:all-test-${{ matrix.arch }} .
-          docker run --rm --platform "${PLATFORM}" --entrypoint bash localhost:5001/gha-runner-compose:all-test-${{ matrix.arch }} -c 'uname -a'
-
-      - name: Push staged images for release PR
-        if: needs.check-target.outputs.is_release_pr == 'true'
-        run: |  # shell
-          # Stage each tier under a PR-numbered tag; publish-release.yml promotes
-          # these to the release tag once the PR is merged, no rebuild needed.
-          for TIER in medium large xlarge all; do
-            docker tag "localhost:5001/gha-runner-compose:${TIER}-test-${{ matrix.arch }}" \
-              "${{ env.STAGING_IMG }}:pr${{ needs.check-target.outputs.pr_number }}-${TIER}-${{ matrix.arch }}"
-            docker push "${{ env.STAGING_IMG }}:pr${{ needs.check-target.outputs.pr_number }}-${TIER}-${{ matrix.arch }}"
-          done
-
-      - name: Clean up local images
-        if: always()
-        run: |  # shell
-          # Free disk on the self-hosted runner for the next run
-          docker rmi -f \
-            "${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}" \
-            "localhost:5001/gha-runner-compose:medium-test-${{ matrix.arch }}" \
-            "localhost:5001/gha-runner-compose:large-test-${{ matrix.arch }}" \
-            "localhost:5001/gha-runner-compose:xlarge-test-${{ matrix.arch }}" \
-            "localhost:5001/gha-runner-compose:all-test-${{ matrix.arch }}" \
-            2>/dev/null || true
-          docker stop local-registry-ci 2>/dev/null || true
-          docker rm   local-registry-ci 2>/dev/null || true
-
   # ── CLEANUP ──────────────────────────────────────────────────────────────────
   # base/essentials/build push a CI_RUN_TAG-scoped version to gha-runner-compose-staging
   # so the next stage in *this* run can pull it as a BASE_IMAGE, and so that GHCR layer
@@ -462,7 +309,7 @@ jobs:
   # future runs benefit from layer dedup even before the cache warms up.
   cleanup-ci-images:
     name: Clean up CI-run-scoped images
-    needs: [check-target, build-test-base, build-test-essentials, build-test-category, build-test-large-tiers]
+    needs: [check-target, build-test-base, build-test-essentials, build-test-category]
     if: always() && needs.check-target.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:

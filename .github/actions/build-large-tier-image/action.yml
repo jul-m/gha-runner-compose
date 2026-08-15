@@ -1,0 +1,116 @@
+name: "Build Large Tier Image"
+description: "Builds one medium/large/xlarge/all tier on the persistent self-hosted BuildKit builder, pushing straight to GHCR staging (never a local registry)"
+author: "jul-m"
+
+inputs:
+  tier:
+    description: "Tier name (medium, large, xlarge, all) - used for tagging and cache scoping"
+    required: true
+  arch:
+    description: "Target architecture (amd64 or arm64)"
+    required: true
+  base-image:
+    description: "Full BASE_IMAGE ref to build FROM (the previous tier's staging tag, or the build-category image for medium)"
+    required: true
+  runner-components:
+    description: "RUNNER_COMPONENTS value passed during build"
+    required: true
+  smoke-test-cmd:
+    description: "Bash command run inside the built image to smoke-test it"
+    required: true
+  staging-img:
+    description: "Full staging image ref, e.g. ghcr.io/owner/gha-runner-compose-staging"
+    required: true
+  ci-run-tag:
+    description: "Run-scoped tag prefix, e.g. ci-12345"
+    required: true
+  registry:
+    description: "Registry namespace used for the --cache-from fallback ref, e.g. ghcr.io/owner"
+    required: true
+  github-token:
+    description: "Token passed as the GITHUB_TOKEN build secret (private component downloads)"
+    required: true
+  builder-name:
+    description: "Name of the persistent docker-container buildx builder"
+    required: false
+    default: "gha-large-runner-builder"
+  is-release-pr:
+    description: "Set to 'true' to also stage the built image under a PR-numbered tag"
+    required: false
+    default: "false"
+  pr-number:
+    description: "PR number used for the release-PR staging tag (required when is-release-pr is true)"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - id: setup-context
+      shell: bash
+      run: |  # shell
+        # Setup context variables
+        PLATFORM="linux/${{ inputs.arch }}"
+        IMAGE_REF="${{ inputs.staging-img }}:${{ inputs.ci-run-tag }}-${{ inputs.tier }}-${{ inputs.arch }}"
+        {
+          echo "PLATFORM=${PLATFORM}"
+          echo "IMAGE_REF=${IMAGE_REF}"
+        } >>"$GITHUB_ENV"
+
+    - name: Ensure persistent BuildKit builder exists
+      shell: bash
+      run: |  # shell
+        # Idempotent: internal cache survives across jobs/runs on this runner,
+        # no --cache-to needed. --cache-from GHCR is used as fallback on cold cache.
+        docker buildx inspect "${{ inputs.builder-name }}" >/dev/null 2>&1 || \
+          docker buildx create \
+            --name "${{ inputs.builder-name }}" \
+            --driver docker-container \
+            --driver-opt network=host \
+            --config tools/buildkitd.toml \
+            --bootstrap
+
+    - name: Build and push ${{ inputs.tier }} image (${{ inputs.arch }})
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |  # shell
+        # Build straight FROM the previous tier's staging tag and --push straight
+        # back to staging: the image is built and lives in exactly one place (this
+        # builder's own content-addressable cache), never bounced through a
+        # separate local registry container/volume. GHCR content-addressing means
+        # the immediately-preceding push already has these exact blobs, so
+        # resolving BASE_IMAGE here only costs a manifest fetch, not a re-download.
+        docker buildx build --builder "${{ inputs.builder-name }}" --platform "${PLATFORM}" --target runner-build \
+          --build-arg "BASE_IMAGE=${{ inputs.base-image }}" \
+          --build-arg "RUNNER_COMPONENTS=${{ inputs.runner-components }}" \
+          --cache-from "type=registry,ref=${{ inputs.registry }}/gha-runner-compose-cache:${{ inputs.tier }}-${{ inputs.arch }}" \
+          --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
+          --push -t "${IMAGE_REF}" .
+
+    - name: Smoke-test ${{ inputs.tier }} image (${{ inputs.arch }})
+      shell: bash
+      run: |  # shell
+        # docker run pulls the just-pushed tag into the host's own Docker store -
+        # a real, bounded, one-time transfer needed to actually execute the
+        # image (the buildx docker-container builder's store isn't reachable by
+        # plain `docker run`). Cleaned up below regardless of outcome.
+        docker run --rm --platform "${PLATFORM}" --entrypoint bash "${IMAGE_REF}" -c '${{ inputs.smoke-test-cmd }}'
+
+    - name: Stage ${{ inputs.tier }} image for release PR
+      if: inputs.is-release-pr == 'true'
+      shell: bash
+      run: |  # shell
+        # Manifest-only retag via imagetools: publish-release.yml promotes this
+        # tag once the PR merges. No blobs are re-uploaded - same content, new tag.
+        docker buildx imagetools create \
+          --tag "${{ inputs.staging-img }}:pr${{ inputs.pr-number }}-${{ inputs.tier }}-${{ inputs.arch }}" \
+          "${IMAGE_REF}"
+
+    - name: Clean up local copy
+      if: always()
+      shell: bash
+      run: |  # shell
+        # Free disk on the self-hosted runner - only the local host-store pull
+        # from the smoke-test step above; the actual image stays in GHCR staging.
+        docker rmi -f "${IMAGE_REF}" 2>/dev/null || true
