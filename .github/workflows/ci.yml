@@ -271,10 +271,12 @@ jobs:
           test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
           own-job-name: ${{ format('Build and Test {0} Image ({1})', matrix.category, matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
-          # ci-large-tiers.yml builds its own "build" category image rather than
-          # depending on this one (see its header comment) - nothing in this run
-          # consumes a category image downstream, so no CI-run-scoped push here.
+          # Only "build" feeds ci-large-tiers.yml's medium tier, which reuses
+          # this exact CI-run-scoped tag as its BASE_IMAGE instead of rebuilding
+          # it (see that workflow's header comment) - the other categories have
+          # nothing downstream in this run, so they skip this push entirely.
           push-image-refs: |
+            ${{ matrix.category == 'build' && format('{0}:{1}-build-{2}', env.STAGING_IMG, env.CI_RUN_TAG, matrix.arch) || '' }}
             ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-{2}-{3}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.category, matrix.arch) || '' }}
 
   test-category:
