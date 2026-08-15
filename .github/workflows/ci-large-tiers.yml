@@ -1,0 +1,450 @@
+name: CI Large Tiers
+run-name: "CI Large Tiers - ${{ github.event_name }} - #${{ github.run_number }}"
+
+# Split out from ci.yml entirely (separate run ID) so a failure anywhere in
+# ci.yml (an unrelated category image, a flaky upstream download, ...) can
+# never cascade-cancel this one - the "Sweep orphaned dependent jobs" step in
+# .github/actions/test-runner-image only ever targets its OWN run's
+# $GITHUB_RUN_ID, so it's structurally unable to reach across workflows.
+#
+# Auto-triggers via workflow_run once ci.yml completes, reusing the "build"
+# category image ci.yml already built and pushed instead of rebuilding it -
+# gated on that SPECIFIC job's conclusion (queried via the API below), not
+# ci.yml's overall conclusion, so an unrelated category failure elsewhere in
+# that run still can't block this workflow. workflow_dispatch (manual/ad-hoc
+# runs) is the one path that builds its own base/essentials/build, since
+# there's no "parent" ci.yml run to reuse there.
+on:
+  workflow_dispatch: {}
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: write
+  actions: read
+
+env:
+  CI_RUN_TAG: ci-${{ github.run_id }}
+  STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+concurrency:
+  group: ci-large-tiers-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Mirrors ci.yml's fork-PR policy (see [[ci-fork-pr-policy]]) transitively:
+  # a fork PR never gets a successful "build" category job in ci.yml (that
+  # workflow skips everything for forks), so the BUILD_MISSING check below
+  # naturally keeps this workflow off for forks too, without re-deriving
+  # fork-origin itself. is_release_pr is looked up directly via the API
+  # rather than trusting workflow_run's `pull_requests` payload field, whose
+  # population conditions aren't reliably documented.
+  check-target:
+    name: Resolve target ref
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.resolve.outputs.should_run }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      is_release_pr: ${{ steps.resolve.outputs.is_release_pr }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      build_ci_run_tag: ${{ steps.resolve.outputs.build_ci_run_tag }}
+    steps:
+      - name: Resolve ref to test
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # Resolve the ref to test, and which "build" category image to
+          # chain medium off (this run's own, or ci.yml's just-built one).
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            SOURCE_RUN_ID="${{ github.event.workflow_run.id }}"
+            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
+            BUILD_MISSING=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${SOURCE_RUN_ID}/jobs" \
+              --jq '[.jobs[] | select(.name == "Build and Test build Image (amd64)" or .name == "Build and Test build Image (arm64)") | select(.conclusion != "success")] | length')
+
+            if [[ "${BUILD_MISSING}" == "0" ]]; then
+              {
+                echo "should_run=true"
+                echo "ref=${{ github.event.workflow_run.head_sha }}"
+                echo "build_ci_run_tag=ci-${SOURCE_RUN_ID}"
+              } >> "$GITHUB_OUTPUT"
+            else
+              echo "ci.yml's build-category job didn't succeed (or this was a fork PR, where it never runs) - nothing to do."
+              {
+                echo "should_run=false"
+                echo "ref="
+                echo "build_ci_run_tag="
+              } >> "$GITHUB_OUTPUT"
+            fi
+          else
+            # workflow_dispatch: manual run, always proceeds, builds its own
+            # base/essentials/build rather than depending on another run.
+            HEAD_BRANCH="${{ github.ref_name }}"
+            {
+              echo "should_run=true"
+              echo "ref=${{ github.sha }}"
+              echo "build_ci_run_tag=${{ env.CI_RUN_TAG }}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+          PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --head "${HEAD_BRANCH}" --base release --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          if [[ -n "${PR_NUMBER}" ]]; then
+            {
+              echo "is_release_pr=true"
+              echo "pr_number=${PR_NUMBER}"
+            } >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo "is_release_pr=false"
+              echo "pr_number="
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── BASE / ESSENTIALS / BUILD (workflow_dispatch only) ──────────────────
+  # Only runs for manual workflow_dispatch runs, which have no ci.yml run to
+  # reuse a "build" category image from. workflow_run skips all of this and
+  # chains straight off ci.yml's own build-category image instead (see
+  # check-target's build_ci_run_tag output) - no point rebuilding what was
+  # just built.
+  build-test-base:
+    name: Build and Test Base Image (${{ matrix.arch }})
+    needs: check-target
+    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true'
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Build base image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose-base:test-${{ matrix.arch }}
+          build-target: base
+          runner-suffix: lt-base-${{ matrix.arch }}
+          cache-scope: base-${{ matrix.arch }}
+          test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
+          own-job-name: ${{ format('Build and Test Base Image ({0})', matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          push-image-refs: |
+            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
+
+  test-base:
+    name: Test Runner (base / ${{ matrix.arch }})
+    needs: check-target
+    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true'
+    runs-on: ${{ format('test-runner-lt-base-{0}-{1}', matrix.arch, github.run_id) }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - name: Run basic test
+        run: |  # shell
+          # Basic smoke test for base image
+          echo "Hello from self-hosted runner (base / ${{ matrix.arch }})!"
+          uname -a
+
+  build-test-essentials:
+    name: Build and Test Essentials Image (${{ matrix.arch }})
+    needs: [check-target, build-test-base]
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Build essentials image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose:lt-essentials-test-${{ matrix.arch }}
+          build-target: runner-build
+          runner-suffix: lt-essentials-${{ matrix.arch }}
+          cache-scope: essentials-${{ matrix.arch }}
+          runner-components: all-essentials
+          additional-build-args: |
+            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
+          test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
+          own-job-name: ${{ format('Build and Test Essentials Image ({0})', matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          push-image-refs: |
+            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+
+  test-essentials:
+    name: Test Runner (essentials / ${{ matrix.arch }})
+    needs: build-test-base
+    runs-on: ${{ format('test-runner-lt-essentials-{0}-{1}', matrix.arch, github.run_id) }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - name: Run basic test
+        run: |  # shell
+          # Smoke test for essentials image
+          echo "Hello from self-hosted runner (essentials / ${{ matrix.arch }})!"
+          uname -a
+
+  build-test-category:
+    name: Build and Test build Image (${{ matrix.arch }})
+    needs: [check-target, build-test-essentials]
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Build build image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose:lt-build-test-${{ matrix.arch }}
+          build-target: runner-build
+          runner-suffix: lt-build-${{ matrix.arch }}
+          cache-scope: build-${{ matrix.arch }}
+          runner-components: all-build
+          additional-build-args: |
+            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+          test-job-name: ${{ format('Test Runner (build / {0})', matrix.arch) }}
+          own-job-name: ${{ format('Build and Test build Image ({0})', matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          push-image-refs: |
+            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}
+
+  test-category:
+    name: Test Runner (build / ${{ matrix.arch }})
+    needs: build-test-essentials
+    runs-on: ${{ format('test-runner-lt-build-{0}-{1}', matrix.arch, github.run_id) }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - name: Run smoke test
+        run: |  # shell
+          # Smoke test for build image
+          echo "Hello from self-hosted runner (build / ${{ matrix.arch }})!"
+          uname -a
+
+  # ── LARGE TIERS ───────────────────────────────────────────────────────────
+  # One job per tier (not sequential steps in one job): a failure building
+  # "all" no longer erases medium/large/xlarge, which already succeeded, are
+  # already durably pushed to GHCR staging, and are reported as their own
+  # green checks regardless of what happens downstream. Each job builds
+  # straight FROM the previous tier's staging tag and pushes straight back to
+  # staging - no local registry hand-off, the image lives in exactly one
+  # place (see [[gha-runner-compose-large-tiers-registry-roundtrip]]).
+  build-tier-medium:
+    name: Build and Test medium Tier (${{ matrix.arch }})
+    needs: [check-target, build-test-category]
+    if: needs.check-target.outputs.should_run == 'true'
+    runs-on: [self-hosted, gha-runner-compose-large-images]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build medium tier
+        uses: ./.github/actions/build-large-tier-image
+        with:
+          tier: medium
+          arch: ${{ matrix.arch }}
+          base-image: ${{ env.STAGING_IMG }}:${{ needs.check-target.outputs.build_ci_run_tag }}-build-${{ matrix.arch }}
+          runner-components: all-cloud,all-nodejs,all-java,all-container,all-python,all-rust
+          smoke-test-cmd: "uname -a && command -v aws && command -v java && command -v python3"
+          staging-img: ${{ env.STAGING_IMG }}
+          ci-run-tag: ${{ env.CI_RUN_TAG }}
+          registry: ${{ env.REGISTRY }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
+          pr-number: ${{ needs.check-target.outputs.pr_number }}
+
+  build-tier-large:
+    name: Build and Test large Tier (${{ matrix.arch }})
+    needs: [check-target, build-tier-medium]
+    runs-on: [self-hosted, gha-runner-compose-large-images]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build large tier
+        uses: ./.github/actions/build-large-tier-image
+        with:
+          tier: large
+          arch: ${{ matrix.arch }}
+          base-image: ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-medium-${{ matrix.arch }}
+          runner-components: all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases
+          smoke-test-cmd: "uname -a && command -v dotnet && command -v ruby"
+          staging-img: ${{ env.STAGING_IMG }}
+          ci-run-tag: ${{ env.CI_RUN_TAG }}
+          registry: ${{ env.REGISTRY }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
+          pr-number: ${{ needs.check-target.outputs.pr_number }}
+
+  build-tier-xlarge:
+    name: Build and Test xlarge Tier (${{ matrix.arch }})
+    needs: [check-target, build-tier-large]
+    runs-on: [self-hosted, gha-runner-compose-large-images]
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build xlarge tier
+        uses: ./.github/actions/build-large-tier-image
+        with:
+          tier: xlarge
+          arch: ${{ matrix.arch }}
+          base-image: ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-large-${{ matrix.arch }}
+          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium
+          smoke-test-cmd: "uname -a && command -v firefox"
+          staging-img: ${{ env.STAGING_IMG }}
+          ci-run-tag: ${{ env.CI_RUN_TAG }}
+          registry: ${{ env.REGISTRY }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
+          pr-number: ${{ needs.check-target.outputs.pr_number }}
+
+  build-tier-all:
+    name: Build and Test all Tier (${{ matrix.arch }})
+    needs: [check-target, build-tier-xlarge]
+    runs-on: [self-hosted, gha-runner-compose-large-images]
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build all tier
+        uses: ./.github/actions/build-large-tier-image
+        with:
+          tier: all
+          arch: ${{ matrix.arch }}
+          base-image: ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-xlarge-${{ matrix.arch }}
+          runner-components: all
+          smoke-test-cmd: "uname -a"
+          staging-img: ${{ env.STAGING_IMG }}
+          ci-run-tag: ${{ env.CI_RUN_TAG }}
+          registry: ${{ env.REGISTRY }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
+          pr-number: ${{ needs.check-target.outputs.pr_number }}
+
+  # ── CLEANUP ──────────────────────────────────────────────────────────────
+  cleanup-ci-images:
+    name: Clean up CI-run-scoped images
+    needs: [check-target, build-test-base, build-test-essentials, build-test-category, build-tier-all]
+    if: always() && needs.check-target.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete staging versions older than 7 days
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # Shared package with ci.yml - see its cleanup-ci-images job for why
+          # 7 days (GHCR layer dedup) and why the default token can write here.
+          CUTOFF=$(date -u -d '7 days ago' +%s 2>/dev/null || date -u -v-7d +%s)
+          VERSION_IDS=$(gh api --paginate "/user/packages/container/gha-runner-compose-staging/versions" \
+            --jq ".[] | select((.updated_at | fromdateiso8601) < ${CUTOFF}) | .id" 2>/dev/null || true)
+          if [ -z "${VERSION_IDS}" ]; then
+            echo "No staging versions older than 7 days to delete."
+          fi
+          for ID in ${VERSION_IDS}; do
+            echo "Deleting gha-runner-compose-staging version ${ID} (older than 7 days)"
+            gh api --method DELETE "/user/packages/container/gha-runner-compose-staging/versions/${ID}" 2>/dev/null \
+              || echo "  ⚠️ Failed to delete version ${ID}."
+          done

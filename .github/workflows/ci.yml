@@ -1,0 +1,338 @@
+name: CI
+run-name: "CI - ${{ github.event_name }} - #${{ github.run_number }}"
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    types: [synchronize, opened, reopened, edited]
+  push:
+    branches: [main]
+  # Runs after the automated upstream-sync workflow so its bot-authored PR
+  # (update-runner-images) gets tested without needing manual "Approve and
+  # run" clicks: pull_request runs from github-actions[bot] require approval
+  # on every push (GitHub security change, June 2026), but workflow_run runs
+  # inherit the trust of the triggering workflow (schedule/workflow_dispatch)
+  # and are not subject to that gate.
+  workflow_run:
+    workflows: ["Update Upstream Sources"]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Every base/essentials/build-category image is pushed under this run-scoped
+  # GHCR tag once tested, so the next stage pulls it directly as its BASE_IMAGE
+  # build-arg instead of the old artifact save/upload/download/load round trip
+  # (a `type=registry` cache-to export isn't a pullable image on its own -
+  # confirmed: `docker pull` on a cache-scope tag fails with "mismatched image
+  # rootfs and manifest layers"). Cleaned up by the cleanup-ci-images job.
+  CI_RUN_TAG: ci-${{ github.run_id }}
+  # Everything transient (intra-run hand-off, release-PR staging) lives in this
+  # package, which this workflow creates and therefore has write access to by
+  # default - gha-runner-compose(-base) are the public release artifacts and
+  # must only ever be written by publish-release.yml, at an actual release.
+  STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
+
+# Concurrent runs on the same ref would race writes to the same GHCR cache
+# tag per scope (and, for release PRs, the same staging image tag) - cancel
+# the superseded run instead of letting them clobber each other.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Resolves which ref to test. For workflow_run, that's always the fixed
+  # `update-runner-images` branch used by Update Upstream Sources - skip
+  # gracefully if it doesn't currently exist (e.g. nothing new to sync, or
+  # the previous PR was just merged and the branch deleted).
+  check-target:
+    name: Resolve target ref
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    outputs:
+      should_run: ${{ steps.resolve.outputs.should_run }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      is_release_pr: ${{ steps.resolve.outputs.is_release_pr }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+    steps:
+      - name: Resolve ref to test
+        id: resolve
+        run: |  # shell
+          # Resolve the ref to test
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            if git ls-remote --exit-code --heads "${{ github.server_url }}/${{ github.repository }}" update-runner-images >/dev/null 2>&1; then
+              echo "should_run=true" >> "$GITHUB_OUTPUT"
+              echo "ref=update-runner-images" >> "$GITHUB_OUTPUT"
+            else
+              echo "No update-runner-images branch found; nothing to test."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "ref=" >> "$GITHUB_OUTPUT"
+            fi
+          elif [[ "${{ github.event_name }}" == "pull_request" \
+                  && "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+            # This repo's CI never runs for fork-originated PRs, full stop - not
+            # just the self-hosted jobs below. A contributor validates their
+            # change on their own fork's Actions (same workflow file, their own
+            # compute/secrets context); this repo only runs CI for its own
+            # branches and PRs.
+            echo "Fork-originated PR - CI runs on the fork's own Actions, not here."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "ref=" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+          # A main -> release PR is the trigger that promotes tested images to
+          # GHCR staging tags, picked up and retagged by publish-release.yml
+          # once the PR is merged - no rebuild needed at that point. Also
+          # requires the PR's head to be this same repo (not a fork): this
+          # flag gates jobs that run on our self-hosted runner, and a
+          # fork-originated PR must never be able to trigger code execution
+          # there.
+          if [[ "${{ github.event_name }}" == "pull_request" \
+                && "${{ github.event.pull_request.base.ref }}" == "release" \
+                && "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
+            echo "is_release_pr=true" >> "$GITHUB_OUTPUT"
+            echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release_pr=false" >> "$GITHUB_OUTPUT"
+            echo "pr_number=" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── BASE ──────────────────────────────────────────────────────────────────
+  # Builds the OS + runner binary base image and boots a runner to validate it.
+  build-test-base:
+    name: Build and Test Base Image (${{ matrix.arch }})
+    needs: check-target
+    if: needs.check-target.outputs.should_run == 'true'
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Build base image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose-base:test-${{ matrix.arch }}
+          build-target: base
+          runner-suffix: base-${{ matrix.arch }}
+          cache-scope: base-${{ matrix.arch }}
+          test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
+          own-job-name: ${{ format('Build and Test Base Image ({0})', matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          push-image-refs: |
+            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
+            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-base-{2}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
+
+  test-base:
+    name: Test Runner (base / ${{ matrix.arch }})
+    needs: check-target
+    if: needs.check-target.outputs.should_run == 'true'
+    runs-on: ${{ format('test-runner-base-{0}-{1}', matrix.arch, github.run_id) }}
+    # If the paired build job fails before starting the runner, this job would
+    # otherwise sit queued for the default 6h job timeout with no way to ever
+    # get picked up - fail fast instead.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - name: Run basic test
+        run: |  # shell
+          # Basic smoke test for base image
+          echo "Hello from self-hosted runner (base / ${{ matrix.arch }})!"
+          uname -a
+
+  # ── ESSENTIALS ────────────────────────────────────────────────────────────
+  # Builds from base, adds git, gh, yq, nodejs-lite, zstd, etc.
+  build-test-essentials:
+    name: Build and Test Essentials Image (${{ matrix.arch }})
+    needs: [check-target, build-test-base]
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Build essentials image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose:essentials-test-${{ matrix.arch }}
+          build-target: runner-build
+          runner-suffix: essentials-${{ matrix.arch }}
+          cache-scope: essentials-${{ matrix.arch }}
+          runner-components: all-essentials
+          additional-build-args: |
+            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-base-${{ matrix.arch }}
+          test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
+          own-job-name: ${{ format('Build and Test Essentials Image ({0})', matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          push-image-refs: |
+            ${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-essentials-{2}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
+
+  test-essentials:
+    name: Test Runner (essentials / ${{ matrix.arch }})
+    needs: build-test-base
+    runs-on: ${{ format('test-runner-essentials-{0}-{1}', matrix.arch, github.run_id) }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - name: Run basic test
+        run: |  # shell
+          # Smoke test for essentials image
+          echo "Hello from self-hosted runner (essentials / ${{ matrix.arch }})!"
+          uname -a
+          git --version
+          gh --version
+          yq --version
+
+  # ── PARALLEL CATEGORY IMAGES ──────────────────────────────────────────────
+  # Each category (all-<category>) builds in parallel from the essentials image.
+  # Platform-specific components (x64-only) are silently skipped by the installer
+  # on arm64 — no matrix exclusions needed.
+  build-test-category:
+    name: Build and Test ${{ matrix.category }} Image (${{ matrix.arch }})
+    needs: [check-target, build-test-essentials]
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Only the 7 categories actually published as standalone thematic
+        # images (see docs/images.md / tools/prebuilt-images.csv). The other
+        # runner-images-src categories (ruby, rust, databases, browser,
+        # haskell, swift, php, web, julia, r, ...) only ship bundled inside
+        # the medium/large/xlarge/all aggregate tiers, which nothing in this
+        # workflow builds yet - testing them standalone here doesn't validate
+        # anything that gets published.
+        category:
+          - build
+          - cloud
+          - java
+          - nodejs
+          - python
+          - container
+          - dotnet
+        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Build ${{ matrix.category }} image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose:${{ matrix.category }}-test-${{ matrix.arch }}
+          build-target: runner-build
+          runner-suffix: ${{ matrix.category }}-${{ matrix.arch }}
+          cache-scope: ${{ matrix.category }}-${{ matrix.arch }}
+          runner-components: all-${{ matrix.category }}
+          additional-build-args: |
+            BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-essentials-${{ matrix.arch }}
+          test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
+          own-job-name: ${{ format('Build and Test {0} Image ({1})', matrix.category, matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          # ci-large-tiers.yml builds its own "build" category image rather than
+          # depending on this one (see its header comment) - nothing in this run
+          # consumes a category image downstream, so no CI-run-scoped push here.
+          push-image-refs: |
+            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-{2}-{3}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.category, matrix.arch) || '' }}
+
+  test-category:
+    name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
+    needs: build-test-essentials
+    runs-on: ${{ format('test-runner-{0}-{1}-{2}', matrix.category, matrix.arch, github.run_id) }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        category:
+          - build
+          - cloud
+          - java
+          - nodejs
+          - python
+          - container
+          - dotnet
+        arch: [amd64, arm64]
+    steps:
+      - name: Run smoke test
+        run: |  # shell
+          # Smoke test for ${{ matrix.category }} image
+          echo "Hello from self-hosted runner (${{ matrix.category }} / ${{ matrix.arch }})!"
+          uname -a
+
+  # ── CLEANUP ──────────────────────────────────────────────────────────────────
+  # base/essentials/build push a CI_RUN_TAG-scoped version to gha-runner-compose-staging
+  # so the next stage in *this* run can pull it as a BASE_IMAGE, and so that GHCR layer
+  # deduplication avoids re-uploading identical layers on subsequent runs.
+  # Versions older than 7 days are pruned here; the current run's images are kept so
+  # future runs benefit from layer dedup even before the cache warms up.
+  cleanup-ci-images:
+    name: Clean up CI-run-scoped images
+    needs: [check-target, build-test-base, build-test-essentials, build-test-category]
+    if: always() && needs.check-target.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete staging versions older than 7 days
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # gha-runner-compose-staging is created by this workflow (via the
+          # default token), which auto-grants this repo admin rights on it -
+          # unlike gha-runner-compose(-base), which this workflow never
+          # writes to at all now, so no permission gap to work around here.
+          #
+          # Keep images for 7 days: GHCR layer deduplication (content-addressable
+          # blobs) means subsequent runs skip re-uploading layers already present
+          # in the registry, even under a different tag/run ID.
+          CUTOFF=$(date -u -d '7 days ago' +%s 2>/dev/null || date -u -v-7d +%s)
+          VERSION_IDS=$(gh api --paginate "/user/packages/container/gha-runner-compose-staging/versions" \
+            --jq ".[] | select((.updated_at | fromdateiso8601) < ${CUTOFF}) | .id" 2>/dev/null || true)
+          if [ -z "${VERSION_IDS}" ]; then
+            echo "No staging versions older than 7 days to delete."
+          fi
+          for ID in ${VERSION_IDS}; do
+            echo "Deleting gha-runner-compose-staging version ${ID} (older than 7 days)"
+            gh api --method DELETE "/user/packages/container/gha-runner-compose-staging/versions/${ID}" 2>/dev/null \
+              || echo "  ⚠️ Failed to delete version ${ID}."
+          done

@@ -12,6 +12,12 @@ if [ ! -f "$script" ]; then
     fail "Missing upstream script for kubernetes-tools: $script"
 fi
 
+# get-helm-3 requires openssl to verify the downloaded binary's checksum
+# (VERIFY_CHECKSUM=true by default) and exits immediately if it's missing;
+# not part of base/essentials, so install it here regardless of arch.
+log "Install APT dependencies for kubernetes-tools: openssl"
+apt-get install -y --no-install-recommends openssl
+
 if is_arm64; then
     log "Adapting install-kubernetes-tools.sh for arm64: use arm64 binaries for kind/minikube/helm where applicable."
     sed -i 's/kind-linux-amd64/kind-linux-arm64/g' "$script"

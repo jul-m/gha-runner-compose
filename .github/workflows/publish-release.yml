@@ -1,0 +1,114 @@
+name: Publish Release
+
+# Runs when a main -> release PR is merged. It does not rebuild anything: the
+# images were already built and tested by ci.yml during that PR (staged to
+# GHCR under a `staging-<image>-pr<N>-<arch>` tag), so this just combines the
+# two per-arch staging tags into one multi-arch manifest under the release
+# date tag, then opens the prerelease for finalize-release.yml to promote
+# later.
+run-name: "Publish Release - #${{ github.run_number }}"
+
+on:
+  push:
+    branches: [release]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  # The only writer to these two: everything transient (release-PR staging,
+  # intra-run hand-off) lives in gha-runner-compose-staging instead (see ci.yml).
+  BASE_IMG_NAME: gha-runner-compose-base:u24.04
+  RUNNER_IMG_NAME: gha-runner-compose:u24.04
+  STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
+  # Matches ci.yml's build-test-category matrix (see tools/prebuilt-images.csv).
+  PUBLISHED_CATEGORIES: build cloud java nodejs python container dotnet
+  # Matches ci.yml's build-test-large-tiers job. A same-repo main -> release PR
+  # always triggers should_build_large_tiers, so these are staged on every
+  # release and safe to always promote here.
+  LARGE_TIERS: medium large xlarge all
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote staged images to release tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve merged PR and release tag
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # Resolve the PR that was just merged into release, and the release date tag
+          PR_NUMBER=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" --jq '.[0].number // empty')
+          if [[ -z "${PR_NUMBER}" ]]; then
+            echo "❌ No pull request found for commit ${{ github.sha }}. Publish Release only supports merges via a main -> release PR."
+            exit 1
+          fi
+          TAG=$(date +%d%m%y)
+          echo "Resolved PR #${PR_NUMBER}, release tag ${TAG}"
+          echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "TAG=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Promote base image
+        env:
+          PR_NUMBER: ${{ steps.resolve.outputs.PR_NUMBER }}
+          TAG: ${{ steps.resolve.outputs.TAG }}
+        run: |  # shell
+          # Combine the amd64/arm64 staging tags into one multi-arch manifest
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/${BASE_IMG_NAME}-${TAG}" \
+            "${STAGING_IMG}:pr${PR_NUMBER}-base-amd64" \
+            "${STAGING_IMG}:pr${PR_NUMBER}-base-arm64"
+
+      - name: Promote essentials and category images
+        env:
+          PR_NUMBER: ${{ steps.resolve.outputs.PR_NUMBER }}
+          TAG: ${{ steps.resolve.outputs.TAG }}
+        run: |  # shell
+          # Combine the amd64/arm64 staging tags into one multi-arch manifest per image
+          for SHORT in essentials ${PUBLISHED_CATEGORIES} ${LARGE_TIERS}; do
+            echo "Promoting ${SHORT}"
+            docker buildx imagetools create \
+              --tag "${REGISTRY}/${RUNNER_IMG_NAME}-${SHORT}-${TAG}" \
+              "${STAGING_IMG}:pr${PR_NUMBER}-${SHORT}-amd64" \
+              "${STAGING_IMG}:pr${PR_NUMBER}-${SHORT}-arm64"
+          done
+
+      - name: Tag release and open prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.resolve.outputs.PR_NUMBER }}
+          TAG: ${{ steps.resolve.outputs.TAG }}
+        run: |  # shell
+          # Tag the release commit and open the prerelease; finalize-release.yml
+          # generates the full notes and promotes it to latest once verified
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${TAG}" "${{ github.sha }}"
+          git push origin "${TAG}"
+
+          gh release create "${TAG}" \
+            --target "${{ github.sha }}" \
+            --title "${TAG}" \
+            --prerelease \
+            --notes "Built from #${PR_NUMBER}. Run \`Finalize Release\` once verified."
+
+          echo "✅ Prerelease ${TAG} created from PR #${PR_NUMBER}"
