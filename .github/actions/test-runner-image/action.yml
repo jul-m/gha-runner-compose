@@ -301,23 +301,26 @@ runs:
           echo "Runner ${RUNNER_NAME} not found or already removed."
         fi
 
-    - name: Cancel workflow if dependent job is still waiting
+    - name: Warn if dependent job is still waiting
       if: failure() && inputs.skip-runner != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |  # shell
-        # Cancel workflow when the dependent job is still waiting for a runner
+        # Surface whether the dependent test job is orphaned (its runner will
+        # never register since this build failed). Deliberately does NOT
+        # cancel the whole workflow run: with fail-fast:false across a large
+        # matrix, one category's transient failure must not take down every
+        # other category still running fine. The orphaned test job instead
+        # fails on its own via the job-level timeout-minutes set in ci.yml.
         if [[ -z "${GH_TOKEN}" ]]; then
-          echo "ℹ️ No GitHub token provided; skipping workflow cancellation."
-          exit 0
+          echo "ℹ️ No GitHub token provided; skipping dependent job check."
+          exit 1
         fi
-
-        set -euo pipefail
 
         TEST_JOB_NAME="${{ inputs.test-job-name }}"
         if [[ -z "${TEST_JOB_NAME}" ]]; then
-          echo "ℹ️ No test job name provided; skipping workflow cancellation."
+          echo "ℹ️ No test job name provided; skipping dependent job check."
           exit 1
         fi
 
@@ -325,7 +328,7 @@ runs:
           --jq ".jobs[] | select(.name == \"${TEST_JOB_NAME}\")") || true
 
         if [[ -z "${JOB_JSON}" ]]; then
-          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' not found; skipping workflow cancellation."
+          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' not found."
           exit 1
         fi
 
@@ -333,10 +336,9 @@ runs:
         JOB_CONCLUSION=$(jq -r '.conclusion // ""' <<<"${JOB_JSON}")
 
         if [[ "${JOB_STATUS}" == "queued" || "${JOB_STATUS}" == "in_progress" ]] && [[ -z "${JOB_CONCLUSION}" ]]; then
-          echo "❌ Dependent job '${TEST_JOB_NAME}' still ${JOB_STATUS}; cancelling workflow ${GITHUB_RUN_ID}."
-          gh run cancel "${GITHUB_RUN_ID}" || true
+          echo "❌ Dependent job '${TEST_JOB_NAME}' still ${JOB_STATUS} and will never get a runner; it will fail once its own timeout-minutes elapses."
         else
-          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' status='${JOB_STATUS}' conclusion='${JOB_CONCLUSION}'; skipping workflow cancellation."
+          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' status='${JOB_STATUS}' conclusion='${JOB_CONCLUSION}'."
         fi
 
         exit 1

@@ -79,6 +79,7 @@ jobs:
     needs: check-target
     if: needs.check-target.outputs.should_run == 'true'
     runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -110,6 +111,10 @@ jobs:
     needs: check-target
     if: needs.check-target.outputs.should_run == 'true'
     runs-on: ${{ format('test-runner-base-{0}-{1}', matrix.arch, github.run_id) }}
+    # If the paired build job fails before starting the runner, this job would
+    # otherwise sit queued for the default 6h job timeout with no way to ever
+    # get picked up - fail fast instead.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -129,6 +134,7 @@ jobs:
     name: Build and Test Essentials Image (${{ matrix.arch }})
     needs: [check-target, build-test-base]
     runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -163,6 +169,7 @@ jobs:
     name: Test Runner (essentials / ${{ matrix.arch }})
     needs: build-test-base
     runs-on: ${{ format('test-runner-essentials-{0}-{1}', matrix.arch, github.run_id) }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -187,6 +194,7 @@ jobs:
     name: Build and Test ${{ matrix.category }} Image (${{ matrix.arch }})
     needs: [check-target, build-test-essentials]
     runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -239,6 +247,7 @@ jobs:
     name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
     needs: build-test-essentials
     runs-on: ${{ format('test-runner-{0}-{1}-{2}', matrix.category, matrix.arch, github.run_id) }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
