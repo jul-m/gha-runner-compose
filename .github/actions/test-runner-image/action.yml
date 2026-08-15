@@ -237,7 +237,7 @@ runs:
         echo "Waiting for job '${TEST_JOB_NAME}' to complete..."
         counter=0
         while true; do
-          JOB_STATUS=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+          JOB_STATUS=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
             --jq ".jobs[] | select(.name == \"${TEST_JOB_NAME}\") | .conclusion")
 
           if [[ "${JOB_STATUS}" == "success" ]]; then
@@ -302,7 +302,7 @@ runs:
           exit 1
         fi
 
-        JOB_JSON=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+        JOB_JSON=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
           --jq ".jobs[] | select(.name == \"${TEST_JOB_NAME}\")") || true
 
         if [[ -z "${JOB_JSON}" ]]; then
