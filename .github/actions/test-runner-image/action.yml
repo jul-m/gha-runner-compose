@@ -52,6 +52,10 @@ inputs:
     description: "Set to 'true' to skip runner start/wait/cleanup steps"
     required: false
     default: "false"
+  push-image-ref:
+    description: "Optional registry ref to tag and push the built image to, once the test job has succeeded"
+    required: false
+    default: ""
 
 outputs:
   runner-name:
@@ -263,6 +267,14 @@ runs:
 
           sleep 10
         done
+
+    - name: Push tested image to registry
+      if: inputs.push-image-ref != ''
+      shell: bash
+      run: |  # shell
+        # Push tested image to registry under the given ref
+        docker tag "${IMAGE_TAG}" "${{ inputs.push-image-ref }}"
+        docker push "${{ inputs.push-image-ref }}"
 
     - name: Cleanup runner
       if: always() && inputs.skip-runner != 'true'

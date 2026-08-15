@@ -33,6 +33,8 @@ jobs:
     outputs:
       should_run: ${{ steps.resolve.outputs.should_run }}
       ref: ${{ steps.resolve.outputs.ref }}
+      is_release_pr: ${{ steps.resolve.outputs.is_release_pr }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
     steps:
       - name: Resolve ref to test
         id: resolve
@@ -50,6 +52,17 @@ jobs:
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+          # A main -> release PR is the trigger that promotes tested images to
+          # GHCR staging tags, picked up and retagged by publish-release.yml
+          # once the PR is merged - no rebuild needed at that point.
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.base.ref }}" == "release" ]]; then
+            echo "is_release_pr=true" >> "$GITHUB_OUTPUT"
+            echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_release_pr=false" >> "$GITHUB_OUTPUT"
+            echo "pr_number=" >> "$GITHUB_OUTPUT"
           fi
 
   # ── BASE ──────────────────────────────────────────────────────────────────
@@ -83,6 +96,7 @@ jobs:
           output-artifact-name: base-image-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          push-image-ref: ${{ needs.check-target.outputs.is_release_pr == 'true' && format('ghcr.io/{0}/gha-runner-compose-base:staging-pr{1}-{2}', github.repository_owner, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-base:
     name: Test Runner (base / ${{ matrix.arch }})
@@ -136,6 +150,7 @@ jobs:
           output-artifact-name: essentials-image-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          push-image-ref: ${{ needs.check-target.outputs.is_release_pr == 'true' && format('ghcr.io/{0}/gha-runner-compose:staging-essentials-pr{1}-{2}', github.repository_owner, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-essentials:
     name: Test Runner (essentials / ${{ matrix.arch }})
@@ -211,6 +226,7 @@ jobs:
             BASE_IMAGE=gha-runner-compose:essentials-test-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          push-image-ref: ${{ (needs.check-target.outputs.is_release_pr == 'true' && contains(fromJSON('["build","cloud","java","nodejs","python","container","dotnet"]'), matrix.category)) && format('ghcr.io/{0}/gha-runner-compose:staging-{1}-pr{2}-{3}', github.repository_owner, matrix.category, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-category:
     name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
