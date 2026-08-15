@@ -308,11 +308,8 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |  # shell
         # Surface whether the dependent test job is orphaned (its runner will
-        # never register since this build failed). Deliberately does NOT
-        # cancel the whole workflow run: with fail-fast:false across a large
-        # matrix, one category's transient failure must not take down every
-        # other category still running fine. The orphaned test job instead
-        # fails on its own via the job-level timeout-minutes set in ci.yml.
+        # never register since this build failed). Cleanup happens in the
+        # "Sweep orphaned dependent jobs" step below, not here.
         if [[ -z "${GH_TOKEN}" ]]; then
           echo "ℹ️ No GitHub token provided; skipping dependent job check."
           exit 1
@@ -336,9 +333,40 @@ runs:
         JOB_CONCLUSION=$(jq -r '.conclusion // ""' <<<"${JOB_JSON}")
 
         if [[ "${JOB_STATUS}" == "queued" || "${JOB_STATUS}" == "in_progress" ]] && [[ -z "${JOB_CONCLUSION}" ]]; then
-          echo "❌ Dependent job '${TEST_JOB_NAME}' still ${JOB_STATUS} and will never get a runner; it will fail once its own timeout-minutes elapses."
+          echo "❌ Dependent job '${TEST_JOB_NAME}' still ${JOB_STATUS} and will never get a runner; it will be swept up once every build job in this run has finished."
         else
           echo "ℹ️ Dependent job '${TEST_JOB_NAME}' status='${JOB_STATUS}' conclusion='${JOB_CONCLUSION}'."
         fi
 
         exit 1
+
+    - name: Sweep orphaned dependent jobs
+      if: always() && inputs.skip-runner != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |  # shell
+        # A failed build leaves its self-hosted test job queued forever - no
+        # matching runner will ever register, and GitHub only auto-cancels
+        # self-hosted queued jobs after 24-48h (timeout-minutes only bounds
+        # execution time once a runner picks the job up, not queue time).
+        # Runs on every invocation - success or failure - so whichever build
+        # job finishes last sweeps up any earlier stragglers. Only cancels
+        # once every build job in the run has reached a terminal state, so a
+        # category still actively building is never interrupted (that's what
+        # caused the mass-cancellation bug this replaced).
+        if [[ -z "${GH_TOKEN}" ]]; then
+          exit 0
+        fi
+
+        ALL_JOBS=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs') || exit 0
+
+        BUILDS_PENDING=$(jq '[.[] | select((.name | startswith("Test Runner (") | not) and (.status == "queued" or .status == "in_progress") and (.conclusion == null))] | length' <<<"${ALL_JOBS}")
+        ORPHANED_TESTS=$(jq -r '[.[] | select((.name | startswith("Test Runner (")) and (.status == "queued" or .status == "in_progress") and (.conclusion == null)) | .name]' <<<"${ALL_JOBS}")
+        ORPHANED_COUNT=$(jq 'length' <<<"${ORPHANED_TESTS}")
+
+        if [[ "${BUILDS_PENDING}" -eq 0 && "${ORPHANED_COUNT}" -gt 0 ]]; then
+          echo "❌ All build jobs are done but ${ORPHANED_COUNT} test job(s) are still queued with no runner coming: $(jq -r 'join(", ")' <<<"${ORPHANED_TESTS}")."
+          echo "Cancelling workflow ${GITHUB_RUN_ID} so they resolve instead of sitting queued for up to 24-48h."
+          gh run cancel "${GITHUB_RUN_ID}" || true
+        fi

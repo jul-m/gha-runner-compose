@@ -20,8 +20,7 @@ env:
   REGISTRY: ghcr.io/${{ github.repository_owner }}
   BASE_IMG_NAME: gha-runner-compose-base:u24.04
   RUNNER_IMG_NAME: gha-runner-compose:u24.04
-  # Thematic categories published as standalone images (see tools/prebuilt-images.csv);
-  # ci.yml's other CI-only categories are validation-only and have no staging tag.
+  # Matches ci.yml's build-test-category matrix (see tools/prebuilt-images.csv).
   PUBLISHED_CATEGORIES: build cloud java nodejs python container dotnet
 
 concurrency:

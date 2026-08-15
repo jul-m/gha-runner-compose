@@ -198,6 +198,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Only the 7 categories actually published as standalone thematic
+        # images (see docs/images.md / tools/prebuilt-images.csv). The other
+        # runner-images-src categories (ruby, rust, databases, browser,
+        # haskell, swift, php, web, julia, r, ...) only ship bundled inside
+        # the medium/large/xlarge/all aggregate tiers, which nothing in this
+        # workflow builds yet - testing them standalone here doesn't validate
+        # anything that gets published.
         category:
           - build
           - cloud
@@ -206,16 +213,6 @@ jobs:
           - python
           - container
           - dotnet
-          - ruby
-          - rust
-          - databases
-          - browser
-          - haskell
-          - swift
-          - php
-          - web
-          - julia
-          - r
         arch: [amd64, arm64]
         include:
           - arch: amd64
@@ -241,7 +238,7 @@ jobs:
             BASE_IMAGE=gha-runner-compose:essentials-test-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
-          push-image-ref: ${{ (needs.check-target.outputs.is_release_pr == 'true' && contains(fromJSON('["build","cloud","java","nodejs","python","container","dotnet"]'), matrix.category)) && format('ghcr.io/{0}/gha-runner-compose:staging-{1}-pr{2}-{3}', github.repository_owner, matrix.category, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
+          push-image-ref: ${{ needs.check-target.outputs.is_release_pr == 'true' && format('ghcr.io/{0}/gha-runner-compose:staging-{1}-pr{2}-{3}', github.repository_owner, matrix.category, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-category:
     name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
@@ -259,16 +256,6 @@ jobs:
           - python
           - container
           - dotnet
-          - ruby
-          - rust
-          - databases
-          - browser
-          - haskell
-          - swift
-          - php
-          - web
-          - julia
-          - r
         arch: [amd64, arm64]
     steps:
       - name: Run smoke test
