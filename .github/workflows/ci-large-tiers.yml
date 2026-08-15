@@ -37,11 +37,15 @@ concurrency:
 jobs:
   # Mirrors ci.yml's fork-PR policy (see [[ci-fork-pr-policy]]) transitively:
   # a fork PR never gets a successful "build" category job in ci.yml (that
-  # workflow skips everything for forks), so the BUILD_MISSING check below
+  # workflow skips everything for forks), so the BUILD_OK check below
   # naturally keeps this workflow off for forks too, without re-deriving
-  # fork-origin itself. is_release_pr is looked up directly via the API
-  # rather than trusting workflow_run's `pull_requests` payload field, whose
-  # population conditions aren't reliably documented.
+  # fork-origin itself. Counts jobs with conclusion=="success" (not jobs
+  # whose conclusion "isn't success") - a run cancelled before its matrix
+  # even expanded has neither named job in the list at all, and "found zero
+  # non-success jobs" is vacuously true for an empty set. is_release_pr is
+  # looked up directly via the API rather than trusting workflow_run's
+  # `pull_requests` payload field, whose population conditions aren't
+  # reliably documented.
   check-target:
     name: Resolve target ref
     runs-on: ubuntu-latest
@@ -62,10 +66,10 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
             SOURCE_RUN_ID="${{ github.event.workflow_run.id }}"
             HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
-            BUILD_MISSING=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${SOURCE_RUN_ID}/jobs" \
-              --jq '[.jobs[] | select(.name == "Build and Test build Image (amd64)" or .name == "Build and Test build Image (arm64)") | select(.conclusion != "success")] | length')
+            BUILD_OK=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${SOURCE_RUN_ID}/jobs" \
+              --jq '[.jobs[] | select(.name == "Build and Test build Image (amd64)" or .name == "Build and Test build Image (arm64)") | select(.conclusion == "success")] | length')
 
-            if [[ "${BUILD_MISSING}" == "0" ]]; then
+            if [[ "${BUILD_OK}" == "2" ]]; then
               {
                 echo "should_run=true"
                 echo "ref=${{ github.event.workflow_run.head_sha }}"
