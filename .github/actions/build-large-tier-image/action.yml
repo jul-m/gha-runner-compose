@@ -70,31 +70,32 @@ runs:
             --config tools/buildkitd.toml \
             --bootstrap
 
-    - name: Build and push ${{ inputs.tier }} image (${{ inputs.arch }})
+    - name: Build, push and load ${{ inputs.tier }} image (${{ inputs.arch }})
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |  # shell
-        # Build straight FROM the previous tier's staging tag and --push straight
-        # back to staging: the image is built and lives in exactly one place (this
-        # builder's own content-addressable cache), never bounced through a
-        # separate local registry container/volume. GHCR content-addressing means
-        # the immediately-preceding push already has these exact blobs, so
-        # resolving BASE_IMAGE here only costs a manifest fetch, not a re-download.
+        # Build straight FROM the previous tier's staging tag and export to BOTH
+        # the registry (type=registry, the durable artifact) and the host's own
+        # Docker store (type=docker, so the smoke-test step below can `docker run`
+        # it) in the same build - one push, zero re-download. Confirmed empirically
+        # that the docker-container driver supports this dual-output combo and
+        # that `type=docker` really lands in the host daemon (bind-mounted
+        # /var/run/docker.sock), not just the builder's own internal store.
         docker buildx build --builder "${{ inputs.builder-name }}" --platform "${PLATFORM}" --target runner-build \
           --build-arg "BASE_IMAGE=${{ inputs.base-image }}" \
           --build-arg "RUNNER_COMPONENTS=${{ inputs.runner-components }}" \
           --cache-from "type=registry,ref=${{ inputs.registry }}/gha-runner-compose-cache:${{ inputs.tier }}-${{ inputs.arch }}" \
           --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
-          --push -t "${IMAGE_REF}" .
+          --output type=registry \
+          --output type=docker \
+          -t "${IMAGE_REF}" .
 
     - name: Smoke-test ${{ inputs.tier }} image (${{ inputs.arch }})
       shell: bash
       run: |  # shell
-        # docker run pulls the just-pushed tag into the host's own Docker store -
-        # a real, bounded, one-time transfer needed to actually execute the
-        # image (the buildx docker-container builder's store isn't reachable by
-        # plain `docker run`). Cleaned up below regardless of outcome.
+        # Already loaded into the host's Docker store by the dual-output build
+        # above - no pull needed here.
         docker run --rm --platform "${PLATFORM}" --entrypoint bash "${IMAGE_REF}" -c '${{ inputs.smoke-test-cmd }}'
 
     - name: Stage ${{ inputs.tier }} image for release PR
