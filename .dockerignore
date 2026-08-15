@@ -1,0 +1,20 @@
+# Only docker-assets/, docker-build/, and Dockerfile are ever COPYed into an
+# image (see the Dockerfile's COPY instructions) - everything else here just
+# bloats the build context sent to the daemon on every single build without
+# affecting layer cache validity, since Docker's cache keys are already
+# scoped to exactly the COPYed paths.
+.git
+.github
+.vscode
+my.local.notes
+tmp
+docs
+runner-images-src
+tools
+README.md
+README.FR.md
+LICENSE
+compose*.yml
+.env*
+.gitignore
+.gitmodules
