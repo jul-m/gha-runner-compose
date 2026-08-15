@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   # Resolves which ref to test. For workflow_run, that's always the fixed

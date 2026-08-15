@@ -126,6 +126,13 @@ runs:
         driver-opts: |
           containerd-image-store=true
 
+    - name: Log in to GHCR (build cache)
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
     - name: Build image
       if: inputs.skip-build != 'true'
       uses: docker/build-push-action@v6
@@ -138,9 +145,9 @@ runs:
         target: ${{ inputs.build-target }}
         tags: ${{ inputs.image-tag }}
         cache-from: |
-          type=gha,scope=gha-docker-build-${{ steps.setup-context.outputs.cache_scope }}
+          type=registry,ref=ghcr.io/${{ github.repository_owner }}/gha-runner-compose-cache:${{ steps.setup-context.outputs.cache_scope }}
         cache-to: |
-          type=gha,mode=max,scope=gha-docker-build-${{ steps.setup-context.outputs.cache_scope }}
+          type=registry,ref=ghcr.io/${{ github.repository_owner }}/gha-runner-compose-cache:${{ steps.setup-context.outputs.cache_scope }},mode=max,image-manifest=true
         build-args: |
           RUNNER_COMPONENTS=${{ inputs.runner-components }}
           ${{ inputs.additional-build-args }}
