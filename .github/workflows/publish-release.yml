@@ -62,11 +62,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          # gha-runner-compose(-base) predate this workflow and their GHCR
-          # "Manage Actions access" grant doesn't cover the default
-          # github.token (confirmed via a permission_denied: write_package
-          # error in ci.yml's equivalent push).
-          password: ${{ secrets.ACTION_GH_TOKEN }}
+          password: ${{ github.token }}
 
       - name: Promote base image
         env:
