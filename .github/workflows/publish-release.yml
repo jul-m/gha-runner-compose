@@ -22,6 +22,10 @@ env:
   RUNNER_IMG_NAME: gha-runner-compose:u24.04
   # Matches ci.yml's build-test-category matrix (see tools/prebuilt-images.csv).
   PUBLISHED_CATEGORIES: build cloud java nodejs python container dotnet
+  # Matches ci.yml's build-test-large-tiers job. A same-repo main -> release PR
+  # always triggers should_build_large_tiers, so these are staged on every
+  # release and safe to always promote here.
+  LARGE_TIERS: medium large xlarge all
 
 concurrency:
   group: publish-release
@@ -77,7 +81,7 @@ jobs:
           TAG: ${{ steps.resolve.outputs.TAG }}
         run: |  # shell
           # Combine the amd64/arm64 staging tags into one multi-arch manifest per image
-          for SHORT in essentials ${PUBLISHED_CATEGORIES}; do
+          for SHORT in essentials ${PUBLISHED_CATEGORIES} ${LARGE_TIERS}; do
             echo "Promoting ${SHORT}"
             docker buildx imagetools create \
               --tag "${REGISTRY}/${RUNNER_IMG_NAME}-${SHORT}-${TAG}" \
