@@ -63,6 +63,16 @@ jobs:
               echo "should_run=false" >> "$GITHUB_OUTPUT"
               echo "ref=" >> "$GITHUB_OUTPUT"
             fi
+          elif [[ "${{ github.event_name }}" == "pull_request" \
+                  && "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+            # This repo's CI never runs for fork-originated PRs, full stop - not
+            # just the self-hosted jobs below. A contributor validates their
+            # change on their own fork's Actions (same workflow file, their own
+            # compute/secrets context); this repo only runs CI for its own
+            # branches and PRs.
+            echo "Fork-originated PR - CI runs on the fork's own Actions, not here."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "ref=" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
