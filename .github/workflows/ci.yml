@@ -388,7 +388,7 @@ jobs:
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:medium-${{ matrix.arch }}" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             --push -t localhost:5001/gha-runner-compose:medium-test-${{ matrix.arch }} .
-          docker run --rm --entrypoint bash localhost:5001/gha-runner-compose:medium-test-${{ matrix.arch }} -c 'uname -a && command -v aws && command -v java && command -v python3'
+          docker run --rm --platform "${PLATFORM}" --entrypoint bash localhost:5001/gha-runner-compose:medium-test-${{ matrix.arch }} -c 'uname -a && command -v aws && command -v java && command -v python3'
 
       - name: Build and smoke-test large image
         env:
@@ -401,7 +401,7 @@ jobs:
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:large-${{ matrix.arch }}" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             --push -t localhost:5001/gha-runner-compose:large-test-${{ matrix.arch }} .
-          docker run --rm --entrypoint bash localhost:5001/gha-runner-compose:large-test-${{ matrix.arch }} -c 'uname -a && command -v dotnet && command -v ruby'
+          docker run --rm --platform "${PLATFORM}" --entrypoint bash localhost:5001/gha-runner-compose:large-test-${{ matrix.arch }} -c 'uname -a && command -v dotnet && command -v ruby'
 
       - name: Build and smoke-test xlarge image
         env:
@@ -414,7 +414,7 @@ jobs:
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:xlarge-${{ matrix.arch }}" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             --push -t localhost:5001/gha-runner-compose:xlarge-test-${{ matrix.arch }} .
-          docker run --rm --entrypoint bash localhost:5001/gha-runner-compose:xlarge-test-${{ matrix.arch }} -c 'uname -a && command -v firefox'
+          docker run --rm --platform "${PLATFORM}" --entrypoint bash localhost:5001/gha-runner-compose:xlarge-test-${{ matrix.arch }} -c 'uname -a && command -v firefox'
 
       - name: Build and smoke-test all image
         env:
@@ -427,7 +427,7 @@ jobs:
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:all-${{ matrix.arch }}" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             --push -t localhost:5001/gha-runner-compose:all-test-${{ matrix.arch }} .
-          docker run --rm --entrypoint bash localhost:5001/gha-runner-compose:all-test-${{ matrix.arch }} -c 'uname -a'
+          docker run --rm --platform "${PLATFORM}" --entrypoint bash localhost:5001/gha-runner-compose:all-test-${{ matrix.arch }} -c 'uname -a'
 
       - name: Push staged images for release PR
         if: needs.check-target.outputs.is_release_pr == 'true'
