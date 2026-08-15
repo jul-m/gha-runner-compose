@@ -354,17 +354,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      - name: Set up persistent BuildKit builder
+        run: |  # shell
+          # Create a named docker-container builder if it doesn't already exist.
+          # The builder and its internal cache volume persist between CI runs, so
+          # subsequent builds skip layers already cached locally - no network upload.
+          # --cache-from (GHCR) is still used as a fallback when the local cache is cold.
+          docker buildx inspect gha-large-runner-builder >/dev/null 2>&1 || \
+            docker buildx create \
+              --name gha-large-runner-builder \
+              --driver docker-container \
+              --driver-opt network=host \
+              --config tools/buildkitd.toml \
+              --bootstrap
+
       - name: Build and smoke-test medium image
         env:
           GITHUB_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
         run: |  # shell
           # Build medium on top of the "build" category image (pulled directly from
           # GHCR as the BASE_IMAGE - already built and tested by build-test-category)
-          docker buildx build --platform "${PLATFORM}" --target runner-build --load \
+          docker buildx build --builder gha-large-runner-builder --platform "${PLATFORM}" --target runner-build --load \
             --build-arg "BASE_IMAGE=${{ env.STAGING_IMG }}:${{ env.CI_RUN_TAG }}-build-${{ matrix.arch }}" \
             --build-arg RUNNER_COMPONENTS=all-cloud,all-nodejs,all-java,all-container,all-python,all-rust \
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:medium-${{ matrix.arch }}" \
-            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:medium-${{ matrix.arch }},mode=max,compression=zstd,compression-level=3" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             -t gha-runner-compose:medium-test-${{ matrix.arch }} .
           docker run --rm --entrypoint bash gha-runner-compose:medium-test-${{ matrix.arch }} -c 'uname -a && command -v aws && command -v java && command -v python3'
@@ -374,11 +387,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
         run: |  # shell
           # Build large on top of medium
-          docker buildx build --platform "${PLATFORM}" --target runner-build --load \
+          docker buildx build --builder gha-large-runner-builder --platform "${PLATFORM}" --target runner-build --load \
             --build-arg BASE_IMAGE=gha-runner-compose:medium-test-${{ matrix.arch }} \
             --build-arg RUNNER_COMPONENTS=all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases \
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:large-${{ matrix.arch }}" \
-            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:large-${{ matrix.arch }},mode=max,compression=zstd,compression-level=3" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             -t gha-runner-compose:large-test-${{ matrix.arch }} .
           docker run --rm --entrypoint bash gha-runner-compose:large-test-${{ matrix.arch }} -c 'uname -a && command -v dotnet && command -v ruby'
@@ -388,11 +400,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
         run: |  # shell
           # Build xlarge on top of large
-          docker buildx build --platform "${PLATFORM}" --target runner-build --load \
+          docker buildx build --builder gha-large-runner-builder --platform "${PLATFORM}" --target runner-build --load \
             --build-arg BASE_IMAGE=gha-runner-compose:large-test-${{ matrix.arch }} \
             --build-arg RUNNER_COMPONENTS=all-swift,actions-cache,codeql-bundle,firefox,selenium \
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:xlarge-${{ matrix.arch }}" \
-            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:xlarge-${{ matrix.arch }},mode=max,compression=zstd,compression-level=3" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             -t gha-runner-compose:xlarge-test-${{ matrix.arch }} .
           docker run --rm --entrypoint bash gha-runner-compose:xlarge-test-${{ matrix.arch }} -c 'uname -a && command -v firefox'
@@ -402,11 +413,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.ACTION_GH_TOKEN }}
         run: |  # shell
           # Build all (every remaining component) on top of xlarge
-          docker buildx build --platform "${PLATFORM}" --target runner-build --load \
+          docker buildx build --builder gha-large-runner-builder --platform "${PLATFORM}" --target runner-build --load \
             --build-arg BASE_IMAGE=gha-runner-compose:xlarge-test-${{ matrix.arch }} \
             --build-arg RUNNER_COMPONENTS=all \
             --cache-from "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:all-${{ matrix.arch }}" \
-            --cache-to "type=registry,ref=${REGISTRY}/gha-runner-compose-cache:all-${{ matrix.arch }},mode=max,compression=zstd,compression-level=3" \
             --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
             -t gha-runner-compose:all-test-${{ matrix.arch }} .
           docker run --rm --entrypoint bash gha-runner-compose:all-test-${{ matrix.arch }} -c 'uname -a'
