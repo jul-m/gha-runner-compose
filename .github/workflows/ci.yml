@@ -21,6 +21,13 @@ permissions:
   contents: read
   packages: write
 
+# Concurrent runs on the same ref would race writes to the same GHCR cache
+# tag per scope (and, for release PRs, the same staging image tag) - cancel
+# the superseded run instead of letting them clobber each other.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Resolves which ref to test. For workflow_run, that's always the fixed
   # `update-runner-images` branch used by Update Upstream Sources - skip
