@@ -311,15 +311,37 @@ jobs:
           uname -a
 
   # ── LARGE TIERS ───────────────────────────────────────────────────────────
-  # One job per tier (not sequential steps in one job): a failure building
-  # "all" no longer erases medium/large/xlarge, which already succeeded, are
-  # already durably pushed to GHCR staging, and are reported as their own
-  # green checks regardless of what happens downstream. Each job builds
-  # straight FROM the previous tier's staging tag and pushes straight back to
-  # staging - no local registry hand-off, the image lives in exactly one
-  # place (see [[gha-runner-compose-large-tiers-registry-roundtrip]]).
-  build-tier-medium:
-    name: Build and Test medium Tier (${{ matrix.arch }})
+  # One job per tier per arch (not a single job matrixed by arch): with only
+  # one physical self-hosted runner, a matrixed job still executes both arch
+  # legs sequentially anyway, but GitHub is free to interleave them (e.g.
+  # medium-amd64, medium-arm64, large-amd64, ...) since a tier job only
+  # waits for the SAME tier's other arch leg, not the previous tier's own
+  # arch. That interleaving doubles how much unrelated content (the other
+  # arch's tier) gets pushed into the persistent BuildKit builder's
+  # size-capped cache (tools/buildkitd.toml, ~30GiB) between when a tier is
+  # built and when its own arch's next tier needs it as BASE_IMAGE - which
+  # measurably evicted it: large-amd64 took 179s to resolve FROM
+  # medium-amd64 (a real ~2min re-download), confirmed via the builder's
+  # live logs, right after medium-arm64 had also built in between.
+  #
+  # Each arch's full chain (medium -> large -> xlarge -> all) now runs
+  # back-to-back with nothing else touching the cache in between, then the
+  # next arch's chain starts - same total work, same single runner, just
+  # reordered so a tier's cache entry is still warm when consumed. arm64's
+  # first job depends on amd64's LAST job only for ordering (always(), no
+  # failure-blocking) - an amd64 failure must not prevent arm64 from being
+  # attempted, preserving the original fail-fast:false independence between
+  # arches.
+  #
+  # A failure building "all" no longer erases medium/large/xlarge, which
+  # already succeeded, are already durably pushed to GHCR staging, and are
+  # reported as their own green checks regardless of what happens
+  # downstream. Each job builds straight FROM the previous tier's staging
+  # tag and pushes straight back to staging - no local registry hand-off,
+  # the image lives in exactly one place (see
+  # [[gha-runner-compose-large-tiers-registry-roundtrip]]).
+  build-tier-medium-amd64:
+    name: Build and Test medium Tier (amd64)
     needs: [check-target, build-test-category]
     # build-test-category is legitimately skipped on the workflow_run path
     # (it only runs for workflow_dispatch) - a plain `if:` gets implicitly
@@ -330,10 +352,6 @@ jobs:
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).medium != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -351,28 +369,24 @@ jobs:
         uses: ./.github/actions/build-large-tier-image
         with:
           tier: medium
-          arch: ${{ matrix.arch }}
-          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-build-${{ matrix.arch }}
+          arch: amd64
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-build-amd64
           runner-components: all-cloud,all-nodejs,all-java,all-container,all-python,all-rust
           smoke-test-cmd: "uname -a && command -v aws && command -v java && command -v python3"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
           registry: ${{ env.REGISTRY }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
-          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-${{ matrix.arch }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-amd64
           is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
           pr-number: ${{ needs.check-target.outputs.pr_number }}
 
-  build-tier-large:
-    name: Build and Test large Tier (${{ matrix.arch }})
-    needs: [check-target, build-tier-medium]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium.result != 'failure' && needs.build-tier-medium.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).large != true
+  build-tier-large-amd64:
+    name: Build and Test large Tier (amd64)
+    needs: [check-target, build-tier-medium-amd64]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-amd64.result != 'failure' && needs.build-tier-medium-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).large != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -390,28 +404,24 @@ jobs:
         uses: ./.github/actions/build-large-tier-image
         with:
           tier: large
-          arch: ${{ matrix.arch }}
-          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-${{ matrix.arch }}
+          arch: amd64
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-amd64
           runner-components: all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases
           smoke-test-cmd: "uname -a && command -v dotnet && command -v ruby"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
           registry: ${{ env.REGISTRY }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
-          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-${{ matrix.arch }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-amd64
           is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
           pr-number: ${{ needs.check-target.outputs.pr_number }}
 
-  build-tier-xlarge:
-    name: Build and Test xlarge Tier (${{ matrix.arch }})
-    needs: [check-target, build-tier-large]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large.result != 'failure' && needs.build-tier-large.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).xlarge != true
+  build-tier-xlarge-amd64:
+    name: Build and Test xlarge Tier (amd64)
+    needs: [check-target, build-tier-large-amd64]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-amd64.result != 'failure' && needs.build-tier-large-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).xlarge != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -429,28 +439,24 @@ jobs:
         uses: ./.github/actions/build-large-tier-image
         with:
           tier: xlarge
-          arch: ${{ matrix.arch }}
-          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-${{ matrix.arch }}
+          arch: amd64
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-amd64
           runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium
           smoke-test-cmd: "uname -a && command -v firefox"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
           registry: ${{ env.REGISTRY }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
-          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-${{ matrix.arch }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-amd64
           is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
           pr-number: ${{ needs.check-target.outputs.pr_number }}
 
-  build-tier-all:
-    name: Build and Test all Tier (${{ matrix.arch }})
-    needs: [check-target, build-tier-xlarge]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge.result != 'failure' && needs.build-tier-xlarge.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).all != true
+  build-tier-all-amd64:
+    name: Build and Test all Tier (amd64)
+    needs: [check-target, build-tier-xlarge-amd64]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-amd64.result != 'failure' && needs.build-tier-xlarge-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).all != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -468,22 +474,164 @@ jobs:
         uses: ./.github/actions/build-large-tier-image
         with:
           tier: all
-          arch: ${{ matrix.arch }}
-          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-${{ matrix.arch }}
+          arch: amd64
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-amd64
           runner-components: all
           smoke-test-cmd: "uname -a"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
           registry: ${{ env.REGISTRY }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
-          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-all-${{ matrix.arch }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-all-amd64
+          is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
+          pr-number: ${{ needs.check-target.outputs.pr_number }}
+
+  build-tier-medium-arm64:
+    name: Build and Test medium Tier (arm64)
+    needs: [check-target, build-test-category, build-tier-all-amd64]
+    # Depends on the amd64 chain's LAST job purely for ordering (see header
+    # comment above) - always() means an amd64 failure never blocks arm64.
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).medium != true
+    runs-on: [self-hosted, gha-runner-compose-large-images]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build medium tier
+        uses: ./.github/actions/build-large-tier-image
+        with:
+          tier: medium
+          arch: arm64
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-build-arm64
+          runner-components: all-cloud,all-nodejs,all-java,all-container,all-python,all-rust
+          smoke-test-cmd: "uname -a && command -v aws && command -v java && command -v python3"
+          staging-img: ${{ env.STAGING_IMG }}
+          ci-run-tag: ${{ env.CI_RUN_TAG }}
+          registry: ${{ env.REGISTRY }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-arm64
+          is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
+          pr-number: ${{ needs.check-target.outputs.pr_number }}
+
+  build-tier-large-arm64:
+    name: Build and Test large Tier (arm64)
+    needs: [check-target, build-tier-medium-arm64]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-arm64.result != 'failure' && needs.build-tier-medium-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).large != true
+    runs-on: [self-hosted, gha-runner-compose-large-images]
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build large tier
+        uses: ./.github/actions/build-large-tier-image
+        with:
+          tier: large
+          arch: arm64
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-arm64
+          runner-components: all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases
+          smoke-test-cmd: "uname -a && command -v dotnet && command -v ruby"
+          staging-img: ${{ env.STAGING_IMG }}
+          ci-run-tag: ${{ env.CI_RUN_TAG }}
+          registry: ${{ env.REGISTRY }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-arm64
+          is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
+          pr-number: ${{ needs.check-target.outputs.pr_number }}
+
+  build-tier-xlarge-arm64:
+    name: Build and Test xlarge Tier (arm64)
+    needs: [check-target, build-tier-large-arm64]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-arm64.result != 'failure' && needs.build-tier-large-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).xlarge != true
+    runs-on: [self-hosted, gha-runner-compose-large-images]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build xlarge tier
+        uses: ./.github/actions/build-large-tier-image
+        with:
+          tier: xlarge
+          arch: arm64
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-arm64
+          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium
+          smoke-test-cmd: "uname -a && command -v firefox"
+          staging-img: ${{ env.STAGING_IMG }}
+          ci-run-tag: ${{ env.CI_RUN_TAG }}
+          registry: ${{ env.REGISTRY }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-arm64
+          is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
+          pr-number: ${{ needs.check-target.outputs.pr_number }}
+
+  build-tier-all-arm64:
+    name: Build and Test all Tier (arm64)
+    needs: [check-target, build-tier-xlarge-arm64]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-arm64.result != 'failure' && needs.build-tier-xlarge-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).all != true
+    runs-on: [self-hosted, gha-runner-compose-large-images]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build all tier
+        uses: ./.github/actions/build-large-tier-image
+        with:
+          tier: all
+          arch: arm64
+          base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-arm64
+          runner-components: all
+          smoke-test-cmd: "uname -a"
+          staging-img: ${{ env.STAGING_IMG }}
+          ci-run-tag: ${{ env.CI_RUN_TAG }}
+          registry: ${{ env.REGISTRY }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-all-arm64
           is-release-pr: ${{ needs.check-target.outputs.is_release_pr }}
           pr-number: ${{ needs.check-target.outputs.pr_number }}
 
   # ── CLEANUP ──────────────────────────────────────────────────────────────
   cleanup-ci-images:
     name: Clean up CI-run-scoped images
-    needs: [check-target, build-test-base, build-test-essentials, build-test-category, build-tier-all]
+    needs: [check-target, build-test-base, build-test-essentials, build-test-category, build-tier-all-amd64, build-tier-all-arm64]
     if: always() && needs.check-target.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     steps:
