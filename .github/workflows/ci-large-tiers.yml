@@ -444,7 +444,7 @@ jobs:
           tier: xlarge
           arch: amd64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-amd64
-          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium
+          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium,awf,copilot-cli
           smoke-test-cmd: "uname -a && command -v firefox"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
@@ -578,7 +578,7 @@ jobs:
           tier: xlarge
           arch: arm64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-arm64
-          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium
+          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium,awf,copilot-cli
           smoke-test-cmd: "uname -a && command -v firefox"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}

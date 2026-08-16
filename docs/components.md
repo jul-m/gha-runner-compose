@@ -6,10 +6,12 @@ This document lists the components that can be enabled in the Docker image via t
 | <ins>Component Name</ins> | <ins>Override</ins> | <ins>Categories</ins> | <ins>Content</ins> | <ins>Prebuilt Image</ins> | <ins>x86_64</ins> | <ins>ARM64</ins> | <ins>Notes</ins> |
 | --- | --- | --- | --- | --- | :---: | :---: | --- |
 | `actions-cache` | No | `other` | [actions/action-versions](https://github.com/actions/action-versions) | `xlarge+` |  |  |  |
+| `aliyun-cli` | No | `cloud` | Alibaba Cloud CLI [aliyun/aliyun-cli](https://github.com/aliyun/aliyun-cli) | `medium+`, `cloud` |  | ❌ | Not available on Linux ARM64 (amd64-only release asset) |
 | `android-sdk` | No | `other` | Android SDK + NDK | `all` |  | ❌ | Not available on Linux ARM64 |
 | `apache` | No | `web` | Apache HTTP Server ([httpd.apache.org](https://httpd.apache.org/)) | `large+` | ✅ | ✅ |  |
 | `apt-common` | Pkg ambiguity | `essentials,system` | Common apt packages (list in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `essentials+` | ✅ | ✅ |  |
 | `apt-vital` | *Skip install* | `prerequs` | Vital apt packages (list in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `base+` | ✅ | ✅ | Already installed in prereqs phase |
+| `awf` | No | `other` | Agent Workflow Firewall JS bundle [github/gh-aw-firewall](https://github.com/github/gh-aw-firewall) | `xlarge+` |  |  |  |
 | `aws-tools` | No | `cloud` | [aws/aws-cli](https://github.com/aws/aws-cli), [aws/session-manager-plugin](https://github.com/aws/session-manager-plugin), [aws/aws-sam-cli](https://github.com/aws/aws-sam-cli) | `medium+`, `cloud` |  |  |  |
 | `azcopy` | No | `cloud` | [Azure/azure-storage-azcopy](https://github.com/Azure/azure-storage-azcopy) | `medium+`, `cloud` |  |  |  |
 | `azure-cli` | No | `cloud` | [Azure/azure-cli](https://github.com/Azure/azure-cli) | `medium+`, `cloud` |  |  |  |
@@ -21,6 +23,7 @@ This document lists the components that can be enabled in the Docker image via t
 | `codeql-bundle` | No | `other` | [github/codeql-action](https://github.com/github/codeql-action) | `xlarge+` |  | ⚠️ | Build ARM64 OK but packages appears targeted at AMD64, no post-install tests → needs tests on ARM64 |
 | `container-tools` | Docker | `container` | [containers/podman](https://github.com/containers/podman), [containers/buildah](https://github.com/containers/buildah), [containers/skopeo](https://github.com/containers/skopeo) | `medium+`, `container` |  | ❌ | Enabled only for x64, can maybe adapted for ARM64 later. Override script disable tests, Docker not available on image build. |
 | <ins>**Component Name**</ins> | <ins>**Override**</ins> | <ins>**Categories**</ins> | <ins>**Content**</ins> | <ins>**Prebuilt Image**</ins> | <ins>**x86_64**</ins> | <ins>**ARM64**</ins> | <ins>**Notes**</ins> |
+| `copilot-cli` | No | `other` | GitHub Copilot CLI [github/copilot-cli](https://github.com/github/copilot-cli), version pinned via [gh-aw compatibility matrix](https://github.com/github/gh-aw-actions/blob/main/.github/aw/compat.json) | `xlarge+` |  |  |  |
 | `docker` | Docker | `container` | [docker/cli](https://github.com/docker/cli), [docker/buildx](https://github.com/docker/buildx), [docker/compose](https://github.com/docker/compose) | `medium+`, `container` | ✅ |  |  |
 | `dotnetcore-sdk` | No | `dotnet` | .NET SDKs (versions in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `large+`, `dotnet` |  |  |  |
 | `firefox` | No | `browser` | [mozilla/geckodriver](https://github.com/mozilla/geckodriver), [ppa:mozillateam/ppa](https://launchpad.net/~mozillateam/+archive/ubuntu/ppa) | `xlarge+` |  |  |  |
@@ -43,6 +46,7 @@ This document lists the components that can be enabled in the Docker image via t
 | `microsoft-edge` | No | `browser` | Edge browser + driver | `all` |  | ❌ | MS Edge not available on Linux ARM64 |
 | `miniconda` | ARM64 | `python` | [conda/miniconda](https://github.com/conda/miniconda) | `medium+`, `python` |  |  |  |
 | `ms-repos` | *Skip install* | `prerequs` | Microsoft apt repo | `base+` | ✅ | ✅ | Already installed in prereqs phase |
+| `mssql-tools` | No | `databases` | MS SQL Server client tools (sqlcmd, bcp) | `large+`, `databases` |  | ❌ | Not available on Linux ARM64 (amd64-only apt package) |
 | `mysql` | No | `databases` | MySQL server + client ([mysql/mysql-server](https://github.com/mysql/mysql-server)) | `large+` |  |  |  |
 | `nginx` | No | `web` | Nginx web server ([nginx/nginx](https://github.com/nginx/nginx)) | `large+` |  |  |  |
 | `ninja` | No | `build` | [ninja-build/ninja](https://github.com/ninja-build/ninja) | `medium+`, `build` |  |  | Requires `cmake` |
@@ -66,7 +70,9 @@ This document lists the components that can be enabled in the Docker image via t
 | `rust` | No | `rust` | [rust-lang/rustup](https://github.com/rust-lang/rustup) + cargo | `medium+` |  |  |  |
 | `sbt` | No | `java` | [sbt/sbt](https://github.com/sbt/sbt) build tool for Scala & Java | `medium+`, `java` |  |  |  |
 | `selenium` | No | `browser` | [SeleniumHQ/selenium](https://github.com/SeleniumHQ/selenium) browser automation framework | `xlarge+` |  |  | Requires `java-tools` |
+| `sqlpackage` | No | `databases` | [SqlPackage/DacFx](https://learn.microsoft.com/sql/tools/sqlpackage/sqlpackage-download) CLI for SQL Server schema management | `large+`, `databases` |  | ❌ | Not available on Linux ARM64 (amd64-only release asset) |
 | `swift` | ARM64 | `swift` | [apple/swift](https://github.com/apple/swift) Programming Language | `xlarge+` |  |  |  |
+| `terraform` | No | `cloud` | [hashicorp/terraform](https://github.com/hashicorp/terraform) IaC | `medium+`, `cloud` |  |  |  |
 | `vcpkg` | No | `build` | [microsoft/vcpkg](https://github.com/microsoft/vcpkg) C++ Library Manager | `medium+`, `build` |  |  |  |
 | `yq` | No | `essentials` | [mikefarah/yq](https://github.com/mikefarah/yq) YAML, JSON and + processor | `essentials+` | ✅ | ✅ |  |
 | `zstd` | No | `essentials` | [facebook/zstd](https://github.com/facebook/zstd) Fast real-time compression algorithm | `essentials+` |  |  |  |
@@ -95,16 +101,16 @@ List of categories and their associated components (sorted alphabetically) :
 
 - **browser**: `firefox`, `google-chrome`, `microsoft-edge`, `selenium`
 - **build**: `bazel`, `clang`, `cmake`, `gcc-compilers`, `gfortran`, `ninja`, `packer`, `vcpkg`
-- **cloud**: `aws-tools`, `azcopy`, `azure-cli`, `azure-devops-cli`, `bicep`, `google-cloud-cli`, `heroku`, `oc-cli`, `oras-cli`, `pulumi`
+- **cloud**: `aliyun-cli`, `aws-tools`, `azcopy`, `azure-cli`, `azure-devops-cli`, `bicep`, `google-cloud-cli`, `heroku`, `oc-cli`, `oras-cli`, `pulumi`, `terraform`
 - **container**: `container-tools`, `docker`, `kubernetes-tools`
-- **databases**: `mysql`, `postgresql`
+- **databases**: `mssql-tools`, `mysql`, `postgresql`, `sqlpackage`
 - **dotnet**: `dotnetcore-sdk`
 - **essentials**: `apt-common`, `git`, `git-lfs`, `github-cli`, `nodejs-lite`, `runner-package`, `yq`, `zstd`
 - **haskell**: `haskell`
 - **java**: `java-tools`, `kotlin`, `leiningen`, `sbt`
 - **julia**: `julia`
 - **lite**: `nodejs-lite` *(The lite version of a package is skipped if the full version is also requested or already installed)*
-- **other**: `actions-cache`, `android-sdk`, `codeql-bundle`, `pipx-packages`
+- **other**: `actions-cache`, `android-sdk`, `awf`, `codeql-bundle`, `copilot-cli`, `pipx-packages`
 - **php**: `php`
 - **python**: `miniconda`, `pipx-packages`, `pypy`, `python`
 - **r**: `rlang`
