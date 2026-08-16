@@ -17,7 +17,7 @@ name: gha-runner-compose-large-runner
 
 services:
   gha-large-runner:
-    image: gha-runner-compose-large-images:local
+    image: ghcr.io/jul-m/gha-runner-compose:u24.04-container-latest
     container_name: gha-large-runner
     env_file:
       - .env.large-runner
