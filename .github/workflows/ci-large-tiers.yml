@@ -1,18 +1,22 @@
 name: CI Large Tiers
 run-name: "CI Large Tiers - ${{ github.event_name }} - #${{ github.run_number }}"
 
-# Split from ci.yml (separate run ID) so a failure there can't cascade-cancel
-# this workflow. Auto-triggers via workflow_run once ci.yml completes,
-# reusing its "build" category image instead of rebuilding (see
-# check-target). branches: [main] just cuts trigger noise - it can't see a
-# PR's base branch, only reduces which feature-branch runs fire this at all;
-# check-target's is_release_pr lookup does the actual gating.
+# Triggered explicitly from ci.yml for main->release PRs (or manually).
 on:
-  workflow_dispatch: {}
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Source commit SHA from ci.yml"
+        required: false
+        type: string
+      source_branch:
+        description: "Source branch name from ci.yml"
+        required: false
+        type: string
+      source_pr_number:
+        description: "PR number from ci.yml"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -28,7 +32,7 @@ env:
   REGISTRY: ghcr.io/${{ github.repository_owner }}
 
 concurrency:
-  group: ci-large-tiers-${{ github.event.workflow_run.head_branch || github.ref }}
+  group: ci-large-tiers-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -52,15 +56,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
-            echo "ref=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
-          else
-            HEAD_BRANCH="${{ github.ref_name }}"
-            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-          fi
+          # Resolve source ref and release PR context
+          HEAD_BRANCH="${{ inputs.source_branch || github.ref_name }}"
+          echo "ref=${{ inputs.source_sha || github.sha }}" >> "$GITHUB_OUTPUT"
 
-          PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --head "${HEAD_BRANCH}" --base release --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          PR_NUMBER="${{ inputs.source_pr_number }}"
+          if [[ -z "${PR_NUMBER}" ]]; then
+            PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --head "${HEAD_BRANCH}" --base release --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          fi
           if [[ -n "${PR_NUMBER}" ]]; then
             {
               echo "is_release_pr=true"
@@ -89,12 +92,7 @@ jobs:
       - name: Determine whether to proceed
         id: determine
         run: |  # shell
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.resolve.outputs.is_release_pr }}" != "true" ]]; then
-            echo "Not a release PR - large tiers only auto-build for main -> release PRs (use workflow_dispatch otherwise)."
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "exists_json={}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          # Determine reuse and whether to proceed
 
           # Checked once here, not per-job: a job whose image already exists
           # is skipped entirely below - no runner spin-up, no re-test.
@@ -117,18 +115,7 @@ jobs:
             done
           done
           echo "exists_json=${RESULT}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            BUILD_EXISTS=$(jq -r '."build-amd64" and ."build-arm64"' <<<"${RESULT}")
-            if [[ "${BUILD_EXISTS}" == "true" ]]; then
-              echo "should_run=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "ci.yml hasn't produced a build-category image for this exact content yet - nothing to do."
-              echo "should_run=false" >> "$GITHUB_OUTPUT"
-            fi
-          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
 
   # ── BASE / ESSENTIALS / BUILD (workflow_dispatch only) ──────────────────
   # Only runs for manual workflow_dispatch runs, which have no ci.yml run to

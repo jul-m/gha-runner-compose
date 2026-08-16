@@ -20,6 +20,7 @@ on:
 permissions:
   contents: read
   packages: write
+  actions: write
 
 env:
   # Every base/essentials/build-category image is pushed under a content-
@@ -334,3 +335,40 @@ jobs:
           # Smoke test for ${{ matrix.category }} image
           echo "Hello from self-hosted runner (${{ matrix.category }} / ${{ matrix.arch }})!"
           uname -a
+
+  trigger-large-tiers:
+    name: Trigger CI Large Tiers
+    needs:
+      - check-target
+      - build-test-base
+      - test-base
+      - build-test-essentials
+      - test-essentials
+      - build-test-category
+      - test-category
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'main' &&
+      github.event.pull_request.base.ref == 'release' &&
+      needs.check-target.outputs.should_run == 'true' &&
+      needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' &&
+      needs.test-base.result != 'failure' && needs.test-base.result != 'cancelled' &&
+      needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' &&
+      needs.test-essentials.result != 'failure' && needs.test-essentials.result != 'cancelled' &&
+      needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled' &&
+      needs.test-category.result != 'failure' && needs.test-category.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch CI Large Tiers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # Trigger ci-large-tiers for main->release PR
+          gh workflow run ci-large-tiers.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${{ github.event.pull_request.head.ref }}" \
+            -f source_sha="${{ github.event.pull_request.head.sha }}" \
+            -f source_branch="${{ github.event.pull_request.head.ref }}" \
+            -f source_pr_number="${{ github.event.pull_request.number }}"
