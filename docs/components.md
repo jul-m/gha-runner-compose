@@ -11,10 +11,10 @@ This document lists the components that can be enabled in the Docker image via t
 | `apt-common` | Pkg ambiguity | `essentials,system` | Common apt packages (list in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `essentials+` | ✅ | ✅ |  |
 | `apt-vital` | *Skip install* | `prerequs` | Vital apt packages (list in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `base+` | ✅ | ✅ | Already installed in prereqs phase |
 | `aws-tools` | ARM64 | `cloud` | [aws/aws-cli](https://github.com/aws/aws-cli), [aws/session-manager-plugin](https://github.com/aws/session-manager-plugin), [aws/aws-sam-cli](https://github.com/aws/aws-sam-cli) | `medium+`, `cloud` |  |  |  |
-| `azcopy` | ARM64 | `cloud` | [Azure/azure-storage-azcopy](https://github.com/Azure/azure-storage-azcopy) | `medium+`, `cloud` |  |  |  |
+| `azcopy` | No | `cloud` | [Azure/azure-storage-azcopy](https://github.com/Azure/azure-storage-azcopy) | `medium+`, `cloud` |  |  |  |
 | `azure-cli` | No | `cloud` | [Azure/azure-cli](https://github.com/Azure/azure-cli) | `medium+`, `cloud` |  |  |  |
 | `azure-devops-cli` | No | `cloud` | [Azure/azure-devops-cli-extension](https://github.com/Azure/azure-devops-cli-extension) | `medium+`, `cloud` |  |  | Requires `azure-cli` |
-| `bazel` | No | `build` | [bazelbuild/bazelisk](https://github.com/bazelbuild/bazelisk) | `medium+`, `build` |  |  | Requires `nodejs` |
+| `bazel` | Version check fix | `build` | [bazelbuild/bazelisk](https://github.com/bazelbuild/bazelisk) | `medium+`, `build` |  |  | Requires `nodejs` |
 | `bicep` | ARM64 | `cloud` | [Azure/bicep](https://github.com/Azure/bicep) | `medium+`, `cloud` |  |  |  |
 | `clang` | No | `build` | Clang/LLDB + format/tidy (versions in [toolset.json](../docker-assets/from-upstream/toolset.json)) | `medium+`, `build` |  |  |  |
 | `cmake` | ARM64 | `build` | [Kitware/CMake](https://github.com/Kitware/CMake) | `medium+`, `build` |  |  |  |
@@ -62,7 +62,7 @@ This document lists the components that can be enabled in the Docker image via t
 | `python` | No | `python` | Python3 + pip + pipx | `medium+`, `python` | ✅ | ✅ |  |
 | `rlang` | No | `r` | R Statistical Computing Language [r-project.org](https://r-project.org/) | `large+` |  |  |  |
 | `ruby` | No | `ruby` | [ruby/ruby-builder](https://github.com/ruby/ruby-builder) | `large+` |  |  |  |
-| `runner-package` | ARM64 | `essentials,system` | Caching [actions/runner](https://github.com/actions/runner) archive | `essentials+` | ✅ | ✅ | Package extracted by `entrypoint.sh` to `$RUNNER_INSTALL_DIR` if executed in self-hosted runner context |
+| `runner-package` | Project-maintained | `essentials,system` | Caching [actions/runner](https://github.com/actions/runner) archive | `essentials+` | ✅ | ✅ | Package extracted by `entrypoint.sh` to `$RUNNER_INSTALL_DIR` if executed in self-hosted runner context. No equivalent script upstream (removed there as unused for GitHub-hosted runners), so the download logic lives entirely in the local script. |
 | `rust` | No | `rust` | [rust-lang/rustup](https://github.com/rust-lang/rustup) + cargo | `medium+` |  |  |  |
 | `sbt` | No | `java` | [sbt/sbt](https://github.com/sbt/sbt) build tool for Scala & Java | `medium+`, `java` |  |  |  |
 | `selenium` | No | `browser` | [SeleniumHQ/selenium](https://github.com/SeleniumHQ/selenium) browser automation framework | `xlarge+` |  |  | Requires `java-tools` |
@@ -80,6 +80,7 @@ This document lists the components that can be enabled in the Docker image via t
   - `ARM64`: The override script adapts the installation for the ARM64 architecture.
   - `Docker`: The override script adapts the installation for a containerized environment.
   - `Skip install`: The component is already installed during the prerequisites phase (`prereqs`) and is skipped if specified `RUNNER_COMPONENTS`.
+  - `Project-maintained`: No equivalent script exists upstream; the local script is the sole implementation rather than an override of an upstream file.
 - **Categories**: Functional categorie(s) associated with the component. This allows for grouped installations (e.g., `all-cloud`). See the [Categories List](#categories-list) for more details.
 - **Prebuilt Image**: Specifies the smallest prebuilt image that includes this component. The `+` indicates that larger images also include it. The size order is: `base` < `essentials` < `medium` < `large` < `xlarge` < `all`. Category names (e.g., `cloud`) denote availability in thematic images in addition. See [docs/images.md](./images.md) for more information.
 - **x86_64 / ARM64**: Component availability and testing status (in real workflows) by hardware architecture:
