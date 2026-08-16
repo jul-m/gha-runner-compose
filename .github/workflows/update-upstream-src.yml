@@ -94,8 +94,10 @@ jobs:
         if: steps.check_changes.outputs.changes == 'true'
         id: copy_sources
         run: |  # shell
-          # Copy Ubuntu scripts
-          cp -r runner-images-src/images/ubuntu/scripts/* docker-assets/from-upstream/
+          # Mirror Ubuntu scripts (rsync --delete prunes files removed upstream,
+          # unlike cp -r which left orphaned scripts around indefinitely)
+          rsync -a --delete --exclude=toolset.json --exclude=LICENCE \
+            runner-images-src/images/ubuntu/scripts/ docker-assets/from-upstream/
           # Copy toolset
           cp runner-images-src/images/ubuntu/toolsets/toolset-2404.json docker-assets/from-upstream/toolset.json
 
