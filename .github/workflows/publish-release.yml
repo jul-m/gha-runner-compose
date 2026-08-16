@@ -15,6 +15,11 @@ run-name: "Publish Release - #${{ github.run_number }}"
 on:
   push:
     branches: [release]
+  # Manual re-run against the current tip of release - e.g. to retry after a
+  # failure, or to (re-)publish a merge that landed under an older version of
+  # this workflow. Idempotent: re-running for the same date-tag updates the
+  # existing tag/release in place instead of failing on "already exists".
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -121,11 +126,13 @@ jobs:
 
       - name: Tag the release commit
         run: |  # shell
-          # Tag the release commit
+          # Tag the release commit - force so a manual re-run for the same
+          # date-tag (retry, or re-publishing a merge from before this
+          # workflow existed) moves it instead of failing on "already exists".
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${{ steps.resolve.outputs.TAG }}" "${{ github.sha }}"
-          git push origin "${{ steps.resolve.outputs.TAG }}"
+          git tag -f "${{ steps.resolve.outputs.TAG }}" "${{ github.sha }}"
+          git push --force origin "${{ steps.resolve.outputs.TAG }}"
 
       - name: Resolve release metadata
         id: meta
@@ -245,11 +252,22 @@ jobs:
         run: |  # shell
           # Published directly as the latest release - the main -> release
           # merge is itself the approval gate, so there is nothing left to
-          # verify before this goes live.
-          gh release create "${TAG}" \
-            --target "${{ github.sha }}" \
-            --title "${TAG} (${RELEASE_DATE})" \
-            --latest \
-            --notes "${{ steps.generate.outputs.notes }}"
+          # verify before this goes live. A release under this date-tag may
+          # already exist (manual re-run, or one created by an older version
+          # of this workflow) - update it in place rather than failing.
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists - updating in place."
+            gh release edit "${TAG}" \
+              --title "${TAG} (${RELEASE_DATE})" \
+              --latest \
+              --prerelease=false \
+              --notes "${{ steps.generate.outputs.notes }}"
+          else
+            gh release create "${TAG}" \
+              --target "${{ github.sha }}" \
+              --title "${TAG} (${RELEASE_DATE})" \
+              --latest \
+              --notes "${{ steps.generate.outputs.notes }}"
+          fi
 
           echo "✅ Release ${TAG} published"
