@@ -5,9 +5,11 @@ name: Publish Release
 # ci-large-tiers.yml, staged to GHCR under a content-addressed
 # `content-<hash>-<name>-<arch>` tag (see those workflows' "Compute content
 # hash" step - identical formula, so the same source tree always yields the
-# same tag here). This just combines the two per-arch content tags into one
-# multi-arch manifest under the release date tag, then opens the prerelease
-# for finalize-release.yml to promote later.
+# same tag here). This combines the two per-arch content tags into one
+# multi-arch manifest under the release date tag, points "-latest" at it, and
+# publishes the finished GitHub release directly - no separate prerelease /
+# manual finalize step. A merge into `release` is itself the human approval
+# gate; nothing further needs verifying after that.
 run-name: "Publish Release - #${{ github.run_number }}"
 
 on:
@@ -106,23 +108,148 @@ jobs:
               "${STAGING_IMG}:content-${CONTENT_HASH}-${SHORT}-arm64"
           done
 
-      - name: Tag release and open prerelease
+      - name: Tag images with latest
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ steps.resolve.outputs.PR_NUMBER }}
           TAG: ${{ steps.resolve.outputs.TAG }}
         run: |  # shell
-          # Tag the release commit and open the prerelease; finalize-release.yml
-          # generates the full notes and promotes it to latest once verified
+          # Point "-latest" at what was just promoted above - manifest-only,
+          # no blobs re-uploaded (imagetools create just writes a new tag).
+          docker buildx imagetools create "${REGISTRY}/${BASE_IMG_NAME}-${TAG}" --tag "${REGISTRY}/${BASE_IMG_NAME}-latest"
+          for SHORT in essentials ${PUBLISHED_CATEGORIES} ${LARGE_TIERS}; do
+            docker buildx imagetools create "${REGISTRY}/${RUNNER_IMG_NAME}-${SHORT}-${TAG}" --tag "${REGISTRY}/${RUNNER_IMG_NAME}-${SHORT}-latest"
+          done
+
+      - name: Tag the release commit
+        run: |  # shell
+          # Tag the release commit
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "${TAG}" "${{ github.sha }}"
-          git push origin "${TAG}"
+          git tag "${{ steps.resolve.outputs.TAG }}" "${{ github.sha }}"
+          git push origin "${{ steps.resolve.outputs.TAG }}"
 
+      - name: Resolve release metadata
+        id: meta
+        env:
+          TAG: ${{ steps.resolve.outputs.TAG }}
+        run: |  # shell
+          # Derive release date and links from the tag, and pin the
+          # runner-images-src commit this release was built against
+          SUBMODULE_COMMIT=$(git rev-parse HEAD:runner-images-src)
+          RELEASE_DATE="${TAG:4:2}/${TAG:2:2}/20${TAG:0:2}"
+          REPO_LINK="${{ github.server_url }}/${{ github.repository }}/tree/${TAG}"
+          {
+            echo "submodule_commit=${SUBMODULE_COMMIT}"
+            echo "release_date=${RELEASE_DATE}"
+            echo "repo_link=${REPO_LINK}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        uses: actions/github-script@v8
+        id: generate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.TAG }}
+          RELEASE_DATE: ${{ steps.meta.outputs.release_date }}
+          REPO_LINK: ${{ steps.meta.outputs.repo_link }}
+          SUBMODULE_COMMIT: ${{ steps.meta.outputs.submodule_commit }}
+        with:
+          script: |  # javascript
+            const fs = require('fs');
+            const tag = process.env.TAG;
+            const releaseDate = process.env.RELEASE_DATE;
+            const repoLink = process.env.REPO_LINK;
+            const registry = process.env.REGISTRY;
+            const baseName = process.env.BASE_IMG_NAME;
+            const runnerName = process.env.RUNNER_IMG_NAME;
+            const submoduleCommit = process.env.SUBMODULE_COMMIT;
+
+            let notes = `## Release ${tag}\n\n`
+            notes += `- **Release Date:** ${releaseDate}\n`
+            notes += `- **Sources Files of release:** ${repoLink}\n`
+            notes += `- **Documentation of available prebuilt images:** ${repoLink}/docs/images.md\n`
+            notes += `- **Documentation of components:** ${repoLink}/docs/components.md\n`
+            notes += `- **Link to version of runner-images used for ${tag}:** https://github.com/actions/runner-images/tree/${submoduleCommit}\n\n`
+
+            const csv = fs.readFileSync('tools/prebuilt-images.csv','utf8');
+            const lines = csv.split('\n').slice(1).filter(Boolean);
+
+            // get package tag -> html_url map via gh api
+            let packagesByTag = {};
+            try {
+              const { execSync } = require('child_process');
+              const headers = "-H \"Accept: application/vnd.github+json\" -H \"X-GitHub-Api-Version: 2022-11-28\" --paginate";
+              const jq = 'reduce .[] as $item ({}; ' +
+                'reduce ($item.metadata.container.tags[]) as $tag (.; ' +
+                '($tag | split("-") | .[0:2] | join("-")) as $image | ' +
+                '.[$image] = ((.[$image] // {}) + { ($tag | split("-") | .[2:] | join("-")) : $item.html_url })' +
+                ')' +
+                ')';
+
+              const getPackageTags = (packageName) => {
+                const cmd = `gh api "/user/packages/container/${packageName}/versions" ${headers} --jq '${jq}'`;
+                const out = execSync(cmd, { encoding: 'utf8', env: Object.assign({}, process.env, { GH_TOKEN: process.env.GITHUB_TOKEN }) }).trim();
+                return out ? JSON.parse(out) : {};
+              };
+
+              const mainTags = getPackageTags('gha-runner-compose');
+              const baseTags = getPackageTags('gha-runner-compose-base');
+              packagesByTag = Object.assign(mainTags, baseTags);
+            } catch (e) { /* ignore, fallback to registry url */ }
+
+            const prefix = (baseName.split(':')[1] || runnerName.split(':')[1] || '');
+
+            // Base Image
+            notes += `## Base Image\n`
+            const baseLine = lines.find(line => line.startsWith('base,'));
+            if (baseLine) {
+              const [short] = baseLine.split(',');
+              const img_ref = `${registry}/${baseName}-${tag}`;
+              const baseTags = packagesByTag['u24.04-latest'];
+              const htmlUrl = baseTags?.[tag] || baseTags?.['latest'] || `https://${img_ref}`;
+              const fullTag = `u24.04-${tag}`;
+              notes += `- [${img_ref}](${htmlUrl}?tag=${fullTag})\n`;
+            }
+
+            // Runner Images
+            notes += `\n## Runner Images\n`
+            for (const line of lines) {
+              const [short] = line.split(',');
+              if (short !== 'base') {
+                const imageKey = `${prefix}-${short}`;
+                const tags = packagesByTag[imageKey];
+                if (tags) {
+                  for (const [tagSuffix, htmlUrl] of Object.entries(tags)) {
+                    if (tagSuffix !== 'latest') {
+                      const fullTag = `${imageKey}-${tagSuffix}`;
+                      const img_ref = `${registry}/${runnerName}-${short}-${tagSuffix}`;
+                      notes += `- **${short}:** [${img_ref}](${htmlUrl}?tag=${fullTag})\n`;
+                    }
+                  }
+                } else {
+                  // fallback
+                  const img_ref = `${registry}/${runnerName}-${short}-${tag}`;
+                  const key = `${imageKey}-${tag}`;
+                  const htmlUrl = `https://${img_ref}?tag=${key}`;
+                  notes += `- **${short}:** [${img_ref}](${htmlUrl})\n`;
+                }
+              }
+            }
+
+            core.setOutput('notes', notes);
+
+      - name: Publish GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.resolve.outputs.TAG }}
+          RELEASE_DATE: ${{ steps.meta.outputs.release_date }}
+        run: |  # shell
+          # Published directly as the latest release - the main -> release
+          # merge is itself the approval gate, so there is nothing left to
+          # verify before this goes live.
           gh release create "${TAG}" \
             --target "${{ github.sha }}" \
-            --title "${TAG}" \
-            --prerelease \
-            --notes "Built from #${PR_NUMBER}. Run \`Finalize Release\` once verified."
+            --title "${TAG} (${RELEASE_DATE})" \
+            --latest \
+            --notes "${{ steps.generate.outputs.notes }}"
 
-          echo "✅ Prerelease ${TAG} created from PR #${PR_NUMBER}"
+          echo "✅ Release ${TAG} published"
