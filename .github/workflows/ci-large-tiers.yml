@@ -1,25 +1,18 @@
 name: CI Large Tiers
 run-name: "CI Large Tiers - ${{ github.event_name }} - #${{ github.run_number }}"
 
-# Split out from ci.yml entirely (separate run ID) so a failure anywhere in
-# ci.yml (an unrelated category image, a flaky upstream download, ...) can
-# never cascade-cancel this one - the "Sweep orphaned dependent jobs" step in
-# .github/actions/test-runner-image only ever targets its OWN run's
-# $GITHUB_RUN_ID, so it's structurally unable to reach across workflows.
-#
-# Auto-triggers via workflow_run once ci.yml completes, reusing the "build"
-# category image ci.yml already built and pushed instead of rebuilding it -
-# gated on whether that content-addressed image actually exists (see
-# check-target), not on ci.yml's overall conclusion or even which specific
-# run produced it, so an unrelated category failure elsewhere in that run
-# still can't block this workflow. workflow_dispatch (manual/ad-hoc runs) is
-# the one path that builds its own base/essentials/build, since there's no
-# "parent" ci.yml run to reuse there.
+# Split from ci.yml (separate run ID) so a failure there can't cascade-cancel
+# this workflow. Auto-triggers via workflow_run once ci.yml completes,
+# reusing its "build" category image instead of rebuilding (see
+# check-target). branches: [main] just cuts trigger noise - it can't see a
+# PR's base branch, only reduces which feature-branch runs fire this at all;
+# check-target's is_release_pr lookup does the actual gating.
 on:
   workflow_dispatch: {}
   workflow_run:
     workflows: ["CI"]
     types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -39,17 +32,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Mirrors ci.yml's fork-PR policy (see [[ci-fork-pr-policy]]) transitively:
-  # a fork PR never gets ci.yml to push a content-tagged "build" image (that
-  # workflow skips everything for forks), so the existence check below
-  # naturally keeps this workflow off for forks too, without re-deriving
-  # fork-origin itself. Checking existence directly - rather than querying a
-  # specific ci.yml run's job conclusions - also means it doesn't matter
-  # which run (or how many) produced that content: as long as the exact
-  # content this commit would build already has a validated image in
-  # staging, there's nothing to rebuild. is_release_pr is looked up directly
-  # via the API rather than trusting workflow_run's `pull_requests` payload
-  # field, whose population conditions aren't reliably documented.
+  # Fork-PR safety is inherited from ci.yml: forks never get a content-tagged
+  # "build" image pushed, so the existence check below naturally stays off
+  # for them too. is_release_pr is looked up via the API, not workflow_run's
+  # `pull_requests` payload field (population conditions aren't documented).
   check-target:
     name: Resolve target ref
     runs-on: ubuntu-latest
@@ -66,7 +52,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
-          # Resolve the ref to test
           if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
             HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
             echo "ref=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
