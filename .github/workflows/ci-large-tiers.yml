@@ -116,20 +116,27 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           BASE="${{ env.STAGING_IMG }}:content-${{ steps.hash.outputs.content_hash }}"
           RESULT="{}"
+          # Tracked per (name, arch), not combined - a tier job is now its
+          # own per-arch job (see build-tier-*-amd64/-arm64 below), so if
+          # only one arch's build genuinely failed (e.g. the self-hosted
+          # runner ran out of disk mid-build), the OTHER arch's already-good
+          # content-tag must still read as reusable, not force a needless
+          # rebuild alongside the real retry.
           for NAME in base essentials build medium large xlarge all; do
-            if docker buildx imagetools inspect "${BASE}-${NAME}-amd64" >/dev/null 2>&1 \
-               && docker buildx imagetools inspect "${BASE}-${NAME}-arm64" >/dev/null 2>&1; then
-              RESULT=$(jq -c --arg k "${NAME}" '. + {($k): true}' <<<"${RESULT}")
-            else
-              RESULT=$(jq -c --arg k "${NAME}" '. + {($k): false}' <<<"${RESULT}")
-            fi
+            for ARCH in amd64 arm64; do
+              if docker buildx imagetools inspect "${BASE}-${NAME}-${ARCH}" >/dev/null 2>&1; then
+                RESULT=$(jq -c --arg k "${NAME}-${ARCH}" '. + {($k): true}' <<<"${RESULT}")
+              else
+                RESULT=$(jq -c --arg k "${NAME}-${ARCH}" '. + {($k): false}' <<<"${RESULT}")
+              fi
+            done
           done
           echo "exists_json=${RESULT}" >> "$GITHUB_OUTPUT"
 
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
-            BUILD_EXISTS=$(jq -r '.build' <<<"${RESULT}")
+            BUILD_EXISTS=$(jq -r '."build-amd64" and ."build-arm64"' <<<"${RESULT}")
             if [[ "${BUILD_EXISTS}" == "true" ]]; then
               echo "should_run=true" >> "$GITHUB_OUTPUT"
             else
@@ -148,7 +155,7 @@ jobs:
   build-test-base:
     name: Build and Test Base Image (${{ matrix.arch }})
     needs: check-target
-    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
+    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && (fromJSON(needs.check-target.outputs.exists_json)['base-amd64'] != true || fromJSON(needs.check-target.outputs.exists_json)['base-arm64'] != true)
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
     strategy:
@@ -182,7 +189,7 @@ jobs:
   test-base:
     name: Test Runner (base / ${{ matrix.arch }})
     needs: check-target
-    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
+    if: github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && (fromJSON(needs.check-target.outputs.exists_json)['base-amd64'] != true || fromJSON(needs.check-target.outputs.exists_json)['base-arm64'] != true)
     runs-on: ${{ format('test-runner-lt-base-{0}-{1}', matrix.arch, github.run_id) }}
     timeout-minutes: 15
     strategy:
@@ -201,7 +208,7 @@ jobs:
   build-test-essentials:
     name: Build and Test Essentials Image (${{ matrix.arch }})
     needs: [check-target, build-test-base]
-    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
+    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && (fromJSON(needs.check-target.outputs.exists_json)['essentials-amd64'] != true || fromJSON(needs.check-target.outputs.exists_json)['essentials-arm64'] != true)
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
     strategy:
@@ -238,7 +245,7 @@ jobs:
   test-essentials:
     name: Test Runner (essentials / ${{ matrix.arch }})
     needs: [check-target, build-test-base]
-    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
+    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && (fromJSON(needs.check-target.outputs.exists_json)['essentials-amd64'] != true || fromJSON(needs.check-target.outputs.exists_json)['essentials-arm64'] != true)
     runs-on: ${{ format('test-runner-lt-essentials-{0}-{1}', matrix.arch, github.run_id) }}
     timeout-minutes: 15
     strategy:
@@ -257,7 +264,7 @@ jobs:
   build-test-category:
     name: Build and Test build Image (${{ matrix.arch }})
     needs: [check-target, build-test-essentials]
-    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).build != true
+    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && (fromJSON(needs.check-target.outputs.exists_json)['build-amd64'] != true || fromJSON(needs.check-target.outputs.exists_json)['build-arm64'] != true)
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
     strategy:
@@ -294,7 +301,7 @@ jobs:
   test-category:
     name: Test Runner (build / ${{ matrix.arch }})
     needs: [check-target, build-test-essentials]
-    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).build != true
+    if: always() && github.event_name == 'workflow_dispatch' && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && (fromJSON(needs.check-target.outputs.exists_json)['build-amd64'] != true || fromJSON(needs.check-target.outputs.exists_json)['build-arm64'] != true)
     runs-on: ${{ format('test-runner-lt-build-{0}-{1}', matrix.arch, github.run_id) }}
     timeout-minutes: 15
     strategy:
@@ -349,7 +356,7 @@ jobs:
     # cancelled() itself, and success() is false when a needed job was
     # skipped, not just when it failed. always() bypasses that, then the
     # explicit checks below restore real failure-blocking.
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).medium != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['medium-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 90
     steps:
@@ -384,7 +391,7 @@ jobs:
   build-tier-large-amd64:
     name: Build and Test large Tier (amd64)
     needs: [check-target, build-tier-medium-amd64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-amd64.result != 'failure' && needs.build-tier-medium-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).large != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-amd64.result != 'failure' && needs.build-tier-medium-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['large-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 90
     steps:
@@ -419,7 +426,7 @@ jobs:
   build-tier-xlarge-amd64:
     name: Build and Test xlarge Tier (amd64)
     needs: [check-target, build-tier-large-amd64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-amd64.result != 'failure' && needs.build-tier-large-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).xlarge != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-amd64.result != 'failure' && needs.build-tier-large-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['xlarge-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 120
     steps:
@@ -454,7 +461,7 @@ jobs:
   build-tier-all-amd64:
     name: Build and Test all Tier (amd64)
     needs: [check-target, build-tier-xlarge-amd64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-amd64.result != 'failure' && needs.build-tier-xlarge-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).all != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-amd64.result != 'failure' && needs.build-tier-xlarge-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['all-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 120
     steps:
@@ -491,7 +498,7 @@ jobs:
     needs: [check-target, build-test-category, build-tier-all-amd64]
     # Depends on the amd64 chain's LAST job purely for ordering (see header
     # comment above) - always() means an amd64 failure never blocks arm64.
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).medium != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['medium-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 90
     steps:
@@ -526,7 +533,7 @@ jobs:
   build-tier-large-arm64:
     name: Build and Test large Tier (arm64)
     needs: [check-target, build-tier-medium-arm64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-arm64.result != 'failure' && needs.build-tier-medium-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).large != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-arm64.result != 'failure' && needs.build-tier-medium-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['large-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 90
     steps:
@@ -561,7 +568,7 @@ jobs:
   build-tier-xlarge-arm64:
     name: Build and Test xlarge Tier (arm64)
     needs: [check-target, build-tier-large-arm64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-arm64.result != 'failure' && needs.build-tier-large-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).xlarge != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-arm64.result != 'failure' && needs.build-tier-large-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['xlarge-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 120
     steps:
@@ -596,7 +603,7 @@ jobs:
   build-tier-all-arm64:
     name: Build and Test all Tier (arm64)
     needs: [check-target, build-tier-xlarge-arm64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-arm64.result != 'failure' && needs.build-tier-xlarge-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).all != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-arm64.result != 'failure' && needs.build-tier-xlarge-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['all-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
     timeout-minutes: 120
     steps:
