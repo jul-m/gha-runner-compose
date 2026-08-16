@@ -20,7 +20,7 @@ env:
   STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
