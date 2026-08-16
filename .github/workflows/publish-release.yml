@@ -64,7 +64,7 @@ jobs:
             echo "❌ No pull request found for commit ${{ github.sha }}. Publish Release only supports merges via a main -> release PR."
             exit 1
           fi
-          TAG=$(date +%d%m%y)
+          TAG=$(date +%y%m%d)
           echo "Resolved PR #${PR_NUMBER}, release tag ${TAG}"
           echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "TAG=${TAG}" >> "$GITHUB_OUTPUT"
