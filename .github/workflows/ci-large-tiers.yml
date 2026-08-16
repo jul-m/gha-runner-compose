@@ -1,25 +1,22 @@
 name: CI Large Tiers
 run-name: "CI Large Tiers - ${{ github.event_name }} - #${{ github.run_number }}"
 
-# Split out from ci.yml entirely (separate run ID) so a failure anywhere in
-# ci.yml (an unrelated category image, a flaky upstream download, ...) can
-# never cascade-cancel this one - the "Sweep orphaned dependent jobs" step in
-# .github/actions/test-runner-image only ever targets its OWN run's
-# $GITHUB_RUN_ID, so it's structurally unable to reach across workflows.
-#
-# Auto-triggers via workflow_run once ci.yml completes, reusing the "build"
-# category image ci.yml already built and pushed instead of rebuilding it -
-# gated on whether that content-addressed image actually exists (see
-# check-target), not on ci.yml's overall conclusion or even which specific
-# run produced it, so an unrelated category failure elsewhere in that run
-# still can't block this workflow. workflow_dispatch (manual/ad-hoc runs) is
-# the one path that builds its own base/essentials/build, since there's no
-# "parent" ci.yml run to reuse there.
+# Triggered explicitly from ci.yml for main->release PRs (or manually).
 on:
-  workflow_dispatch: {}
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Source commit SHA from ci.yml"
+        required: false
+        type: string
+      source_branch:
+        description: "Source branch name from ci.yml"
+        required: false
+        type: string
+      source_pr_number:
+        description: "PR number from ci.yml"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -35,21 +32,14 @@ env:
   REGISTRY: ghcr.io/${{ github.repository_owner }}
 
 concurrency:
-  group: ci-large-tiers-${{ github.event.workflow_run.head_branch || github.ref }}
+  group: ci-large-tiers-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Mirrors ci.yml's fork-PR policy (see [[ci-fork-pr-policy]]) transitively:
-  # a fork PR never gets ci.yml to push a content-tagged "build" image (that
-  # workflow skips everything for forks), so the existence check below
-  # naturally keeps this workflow off for forks too, without re-deriving
-  # fork-origin itself. Checking existence directly - rather than querying a
-  # specific ci.yml run's job conclusions - also means it doesn't matter
-  # which run (or how many) produced that content: as long as the exact
-  # content this commit would build already has a validated image in
-  # staging, there's nothing to rebuild. is_release_pr is looked up directly
-  # via the API rather than trusting workflow_run's `pull_requests` payload
-  # field, whose population conditions aren't reliably documented.
+  # Fork-PR safety is inherited from ci.yml: forks never get a content-tagged
+  # "build" image pushed, so the existence check below naturally stays off
+  # for them too. is_release_pr is looked up via the API, not workflow_run's
+  # `pull_requests` payload field (population conditions aren't documented).
   check-target:
     name: Resolve target ref
     runs-on: ubuntu-latest
@@ -66,16 +56,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
-          # Resolve the ref to test
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
-            echo "ref=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
-          else
-            HEAD_BRANCH="${{ github.ref_name }}"
-            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-          fi
+          # Resolve source ref and release PR context
+          HEAD_BRANCH="${{ inputs.source_branch || github.ref_name }}"
+          echo "ref=${{ inputs.source_sha || github.sha }}" >> "$GITHUB_OUTPUT"
 
-          PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --head "${HEAD_BRANCH}" --base release --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          PR_NUMBER="${{ inputs.source_pr_number }}"
+          if [[ -z "${PR_NUMBER}" ]]; then
+            PR_NUMBER=$(gh pr list --repo "${{ github.repository }}" --head "${HEAD_BRANCH}" --base release --state open --json number --jq '.[0].number' 2>/dev/null || true)
+          fi
           if [[ -n "${PR_NUMBER}" ]]; then
             {
               echo "is_release_pr=true"
@@ -104,12 +92,7 @@ jobs:
       - name: Determine whether to proceed
         id: determine
         run: |  # shell
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" && "${{ steps.resolve.outputs.is_release_pr }}" != "true" ]]; then
-            echo "Not a release PR - large tiers only auto-build for main -> release PRs (use workflow_dispatch otherwise)."
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "exists_json={}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          # Determine reuse and whether to proceed
 
           # Checked once here, not per-job: a job whose image already exists
           # is skipped entirely below - no runner spin-up, no re-test.
@@ -132,18 +115,7 @@ jobs:
             done
           done
           echo "exists_json=${RESULT}" >> "$GITHUB_OUTPUT"
-
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            BUILD_EXISTS=$(jq -r '."build-amd64" and ."build-arm64"' <<<"${RESULT}")
-            if [[ "${BUILD_EXISTS}" == "true" ]]; then
-              echo "should_run=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "ci.yml hasn't produced a build-category image for this exact content yet - nothing to do."
-              echo "should_run=false" >> "$GITHUB_OUTPUT"
-            fi
-          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
 
   # ── BASE / ESSENTIALS / BUILD (workflow_dispatch only) ──────────────────
   # Only runs for manual workflow_dispatch runs, which have no ci.yml run to
@@ -444,7 +416,7 @@ jobs:
           tier: xlarge
           arch: amd64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-amd64
-          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium
+          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium,awf,copilot-cli
           smoke-test-cmd: "uname -a && command -v firefox"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
@@ -578,7 +550,7 @@ jobs:
           tier: xlarge
           arch: arm64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-arm64
-          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium
+          runner-components: all-swift,actions-cache,codeql-bundle,firefox,selenium,awf,copilot-cli
           smoke-test-cmd: "uname -a && command -v firefox"
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}

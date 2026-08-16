@@ -1,7 +1,7 @@
 #!/bin/bash
 ################################################################################
 ##  File:  docker-build/components/docker.sh
-##  Desc:  Override install-docker.sh script to support Docker and arm64
+##  Desc:  Override install-docker.sh script to support Docker
 ################################################################################
 
 source "$LOCAL_INSTALL/helpers.sh"
@@ -11,11 +11,6 @@ export DOCKERHUB_PULL_IMAGES="no"
 
 if [ ! -f "$script" ]; then
     fail "Missing upstream script for docker: $script"
-fi
-
-if is_arm64; then
-    log "Adapting upstream docker script for arm64"
-    sed -i 's/amd64/arm64/g' "$script"
 fi
 
 # Comments systemd calls and other incompatible commands for container build context

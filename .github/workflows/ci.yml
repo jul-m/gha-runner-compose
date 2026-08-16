@@ -20,6 +20,7 @@ on:
 permissions:
   contents: read
   packages: write
+  actions: write
 
 env:
   # Every base/essentials/build-category image is pushed under a content-
@@ -168,7 +169,7 @@ jobs:
           image-tag: gha-runner-compose-base:test-${{ matrix.arch }}
           build-target: base
           runner-suffix: base-${{ matrix.arch }}
-          cache-scope: base-${{ matrix.arch }}
+          cache-scope: ${{ needs.check-target.outputs.content_hash }}-${{ matrix.arch }}
           test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
           own-job-name: ${{ format('Build and Test Base Image ({0})', matrix.arch) }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
@@ -235,7 +236,7 @@ jobs:
           image-tag: gha-runner-compose:essentials-test-${{ matrix.arch }}
           build-target: runner-build
           runner-suffix: essentials-${{ matrix.arch }}
-          cache-scope: essentials-${{ matrix.arch }}
+          cache-scope: ${{ needs.check-target.outputs.content_hash }}-${{ matrix.arch }}
           runner-components: all-essentials
           additional-build-args: |
             BASE_IMAGE=${{ env.BASE_CONTENT_TAG }}
@@ -305,7 +306,7 @@ jobs:
           image-tag: gha-runner-compose:${{ matrix.category }}-test-${{ matrix.arch }}
           build-target: runner-build
           runner-suffix: ${{ matrix.category }}-${{ matrix.arch }}
-          cache-scope: ${{ matrix.category }}-${{ matrix.arch }}
+          cache-scope: ${{ needs.check-target.outputs.content_hash }}-${{ matrix.arch }}
           runner-components: all-${{ matrix.category }}
           additional-build-args: |
             BASE_IMAGE=${{ env.ESSENTIALS_CONTENT_TAG }}
@@ -334,3 +335,40 @@ jobs:
           # Smoke test for ${{ matrix.category }} image
           echo "Hello from self-hosted runner (${{ matrix.category }} / ${{ matrix.arch }})!"
           uname -a
+
+  trigger-large-tiers:
+    name: Trigger CI Large Tiers
+    needs:
+      - check-target
+      - build-test-base
+      - test-base
+      - build-test-essentials
+      - test-essentials
+      - build-test-category
+      - test-category
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'main' &&
+      github.event.pull_request.base.ref == 'release' &&
+      needs.check-target.outputs.should_run == 'true' &&
+      needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' &&
+      needs.test-base.result != 'failure' && needs.test-base.result != 'cancelled' &&
+      needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' &&
+      needs.test-essentials.result != 'failure' && needs.test-essentials.result != 'cancelled' &&
+      needs.build-test-category.result != 'failure' && needs.build-test-category.result != 'cancelled' &&
+      needs.test-category.result != 'failure' && needs.test-category.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch CI Large Tiers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # Trigger ci-large-tiers for main->release PR
+          gh workflow run ci-large-tiers.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${{ github.event.pull_request.head.ref }}" \
+            -f source_sha="${{ github.event.pull_request.head.sha }}" \
+            -f source_branch="${{ github.event.pull_request.head.ref }}" \
+            -f source_pr_number="${{ github.event.pull_request.number }}"
