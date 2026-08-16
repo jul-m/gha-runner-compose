@@ -619,27 +619,3 @@ jobs:
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-all-arm64
 
-  # ── CLEANUP ──────────────────────────────────────────────────────────────
-  cleanup-ci-images:
-    name: Clean up CI-run-scoped images
-    needs: [check-target, build-test-base, build-test-essentials, build-test-category, build-tier-all-amd64, build-tier-all-arm64]
-    if: always() && needs.check-target.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Delete staging versions older than 7 days
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |  # shell
-          # Shared package with ci.yml - see its cleanup-ci-images job for why
-          # 7 days (GHCR layer dedup) and why the default token can write here.
-          CUTOFF=$(date -u -d '7 days ago' +%s 2>/dev/null || date -u -v-7d +%s)
-          VERSION_IDS=$(gh api --paginate "/user/packages/container/gha-runner-compose-staging/versions" \
-            --jq ".[] | select((.updated_at | fromdateiso8601) < ${CUTOFF}) | .id" 2>/dev/null || true)
-          if [ -z "${VERSION_IDS}" ]; then
-            echo "No staging versions older than 7 days to delete."
-          fi
-          for ID in ${VERSION_IDS}; do
-            echo "Deleting gha-runner-compose-staging version ${ID} (older than 7 days)"
-            gh api --method DELETE "/user/packages/container/gha-runner-compose-staging/versions/${ID}" 2>/dev/null \
-              || echo "  ⚠️ Failed to delete version ${ID}."
-          done

@@ -9,8 +9,50 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  packages: write
 
 jobs:
+  # Independent of update-runner-images-src (no needs:) so a submodule-sync
+  # failure can never block cleanup, and vice versa - same isolation
+  # principle as splitting ci-large-tiers.yml out of ci.yml. Runs once daily
+  # via this workflow's own cron instead of from every ci.yml/ci-large-tiers.yml
+  # run, since staging/cache pruning doesn't need to happen more often than
+  # that and doing it from every CI run was redundant, wasted API calls.
+  cleanup-ci-images:
+    name: Clean up staging and cache images older than 7 days
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # gha-runner-compose-staging and gha-runner-compose-cache are both
+          # created by CI workflows using the default token, which auto-grants
+          # this repo admin rights on them - unlike gha-runner-compose(-base),
+          # which nothing but publish-release.yml ever writes to.
+          #
+          # Keep for 7 days: GHCR layer deduplication (content-addressable
+          # blobs) means later pushes skip re-uploading layers already present
+          # in the registry, even under a different tag. A content-tag that's
+          # still being reused gets its updated_at refreshed on every reuse
+          # (ci.yml/ci-large-tiers.yml re-push it, a cheap no-op for unchanged
+          # content), so only tags nothing has referenced in 7+ days actually
+          # get pruned here.
+          CUTOFF=$(date -u -d '7 days ago' +%s 2>/dev/null || date -u -v-7d +%s)
+          for PACKAGE in gha-runner-compose-staging gha-runner-compose-cache; do
+            VERSION_IDS=$(gh api --paginate "/user/packages/container/${PACKAGE}/versions" \
+              --jq ".[] | select((.updated_at | fromdateiso8601) < ${CUTOFF}) | .id" 2>/dev/null || true)
+            if [ -z "${VERSION_IDS}" ]; then
+              echo "No ${PACKAGE} versions older than 7 days to delete."
+              continue
+            fi
+            for ID in ${VERSION_IDS}; do
+              echo "Deleting ${PACKAGE} version ${ID} (older than 7 days)"
+              gh api --method DELETE "/user/packages/container/${PACKAGE}/versions/${ID}" 2>/dev/null \
+                || echo "  ⚠️ Failed to delete version ${ID}."
+            done
+          done
+
   update-runner-images-src:
     runs-on: ubuntu-latest
     steps:
