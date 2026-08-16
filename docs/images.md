@@ -34,7 +34,9 @@ The `base` image serves as the foundation for all other runner images.
 - **Source**: Built from the `base` stage in the Dockerfile, using `ubuntu:24.04` as its parent.
 - **Contents**: Includes installation sources, prerequisite packages, the `runner` user setup, and the entrypoint script.
 - **Usage**: It can be used as a standalone GitHub Actions runner, but it only contains the essential prerequisites, with no additional components.
-- **Naming**: `ghcr.io/jul-m/gha-runner-compose-base:u24.04-<date>`, where `<date>` is the release date in `ddmmyy` format (e.g., `250919`). The `latest` tag always points to the most recent build.
+- **Naming**: `ghcr.io/jul-m/gha-runner-compose-base:u24.04-<date>`, where:
+  - `u24.04`: Indicates the base Ubuntu version.
+  - `<date>` is the release date in `ddmmyy` format (e.g., `250919`). The `latest` tag always points to the most recent build.
 - **Build Argument**: Use this as the `BASE_IMAGE` value when building a custom image from scratch.
 
 **Key Information:**
@@ -106,22 +108,26 @@ Our images are built incrementally, with each layer adding new components on top
   - **Approximate Size** (compressed/uncompressed): ~2.25 GB / ~8.75 GB
 
 #### Larger Aggregate Images
-- **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-medium-latest`
+- **Medium**:
+  - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-medium-latest`
   - **Based on**: `build`
   - **Additional Components**: `all-cloud`, `all-nodejs`, `all-java`, `all-container`, `all-python`, `all-rust`.
   - **Approximate Size** (compressed/uncompressed): ~5 GB / ~20 GB
 
-- **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-large-latest`
+- **Large**:
+  - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-large-latest`
   - **Based on**: `medium`
   - **Additional Components**: `all-dotnet`, `all-php`, `all-ruby`, `all-r`, `all-julia`, `pipx-packages`, `all-web`, `all-databases`.
   - **Approximate Size** (compressed/uncompressed): ~7.25 GB / ~29 GB
 
-- **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-xlarge-latest`
+- **X-Large**:
+  - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-xlarge-latest`
   - **Based on**: `large`
   - **Additional Components**: `all-swift`, `actions-cache`, `codeql-bundle`, `firefox`, `selenium`.
   - **Approximate Size** (compressed/uncompressed): ~9.5 GB / ~35.5 GB
 
-- **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-all-latest`
+- **ALL**:
+  - **Image**: `ghcr.io/jul-m/gha-runner-compose:u24.04-all-latest`
   - **Based on**: `xlarge`
   - **Additional Components**: All remaining components not included in `xlarge`.
   - Most components compatible only with AMD64 are present in the AMD64 version of this image.
@@ -133,4 +139,4 @@ Our images are built incrementally, with each layer adding new components on top
 
 - **Components List:** For a detailed list of all available components and their status, see [docs/components.md](./components.md).
 - **`all-<category>` Notation:** A tag like `all-nodejs` or `all-cloud` installs all components belonging to that category. Categories are defined in [docker-build/local-install/components.csv](../docker-build/local-install/components.csv) and documented in [docs/components.md](./components.md).
-- The Approximate Sizes are provided for informational purposes only and may vary due to several factors (especially between AMD64 and ARM64 versions). The size indicated includes all layers of the image for a single architecture. If you have already pulled other images from this repository with shared layers, the additional space used will be lower. If you pull both the AMD64 and ARM64 versions of the images, the size will be twice as large (no shared layers between the two).
+- The Approximate Sizes are provided for informational purposes only and may vary due to several factors (especially between AMD64 and ARM64 versions). The size indicated includes all layers of the image for a single architecture. If you have already pulled other images from this repository with shared layers, the additional space used will be lower. If you pull both the AMD64 and ARM64 versions of the images, the size will be twice as large (no shared layers between the two architectures).

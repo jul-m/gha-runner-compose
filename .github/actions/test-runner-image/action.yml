@@ -1,0 +1,384 @@
+name: "Test Runner Image"
+description: "Builds, boots, waits, and cleans up a GitHub Actions runner container for a given image"
+author: "jul-m"
+
+inputs:
+  image-tag:
+    description: "Local Docker tag used to reference the built image"
+    required: true
+  build-target:
+    description: "Dockerfile target stage to build"
+    required: true
+  runner-suffix:
+    description: "Suffix used to generate unique runner/container names"
+    required: true
+  runner-components:
+    description: "Optional RUNNER_COMPONENTS value passed during build"
+    required: false
+    default: ""
+  additional-build-args:
+    description: "Optional extra build arguments appended to docker build"
+    required: false
+    default: ""
+  test-job-name:
+    description: "Name of the job that must succeed when executed on the started runner (required unless skip-runner is true)"
+    required: false
+    default: ""
+  additional-runner-labels:
+    description: "Optional extra runner labels (comma-separated) appended to the dynamic label"
+    required: false
+    default: ""
+  github-token:
+    description: "Token used by gh CLI to manage the runner lifecycle and check workflow job status"
+    required: false
+    default: ""
+  cache-scope:
+    description: "Cache scope identifier used for docker build cache segregation"
+    required: false
+    default: ""
+  skip-build:
+    description: "Set to 'true' to skip docker build (expects image to be pre-loaded)"
+    required: false
+    default: "false"
+  skip-runner:
+    description: "Set to 'true' to skip runner start/wait/cleanup steps"
+    required: false
+    default: "false"
+  push-image-refs:
+    description: "Optional newline-separated registry refs to tag and push the built image to, once the test job has succeeded"
+    required: false
+    default: ""
+  own-job-name:
+    description: "This build job's own workflow job name, so the orphaned-job sweep can exclude itself (a running job never sees its own conclusion)"
+    required: false
+    default: ""
+  content-tag:
+    description: "Full content-addressed registry ref (e.g. staging:content-<hash>-base-amd64). If it already exists, skip the rebuild and pull it instead - the image still gets re-tested below either way, just without paying for docker build again."
+    required: false
+    default: ""
+
+outputs:
+  runner-name:
+    description: "Name assigned to the temporary self-hosted runner"
+    value: ${{ steps.setup-context.outputs.runner_name }}
+  runner-label:
+    description: "Primary label assigned to the temporary self-hosted runner"
+    value: ${{ steps.setup-context.outputs.runner_label }}
+  container-name:
+    description: "Docker container name used for the temporary runner"
+    value: ${{ steps.setup-context.outputs.container_name }}
+  reused:
+    description: "'true' if an existing content-tagged image was reused instead of rebuilding"
+    value: ${{ steps.check-reuse.outputs.reused }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: setup-context
+      shell: bash
+      run: |  # shell
+        # Setup context variables
+        RUNNER_NAME="test-runner-${{ inputs.runner-suffix }}-${{ github.run_id }}"
+        RUNNER_LABEL="test-runner-${{ inputs.runner-suffix }}-${{ github.run_id }}"
+        CONTAINER_NAME="test-runner-${{ inputs.runner-suffix }}-${{ github.run_id }}"
+        IMAGE_TAG="${{ inputs.image-tag }}"
+        ADDITIONAL_LABELS="${{ inputs.additional-runner-labels }}"
+        CACHE_SCOPE="${{ inputs.cache-scope }}"
+        if [[ -z "${CACHE_SCOPE}" ]]; then
+          CACHE_SCOPE="${{ inputs.runner-suffix }}"
+        fi
+        if [[ -n "${ADDITIONAL_LABELS}" ]]; then
+          RUNNER_LABELS="${RUNNER_LABEL},${ADDITIONAL_LABELS}"
+        else
+          RUNNER_LABELS="${RUNNER_LABEL}"
+        fi
+        {
+          echo "RUNNER_NAME=${RUNNER_NAME}"
+          echo "RUNNER_LABEL=${RUNNER_LABEL}"
+          echo "RUNNER_LABELS=${RUNNER_LABELS}"
+          echo "CONTAINER_NAME=${CONTAINER_NAME}"
+          echo "IMAGE_TAG=${IMAGE_TAG}"
+          echo "CACHE_SCOPE=${CACHE_SCOPE}"
+        } >>"$GITHUB_ENV"
+        {
+          echo "runner_name=${RUNNER_NAME}"
+          echo "runner_label=${RUNNER_LABEL}"
+          echo "runner_labels=${RUNNER_LABELS}"
+          echo "container_name=${CONTAINER_NAME}"
+          echo "cache_scope=${CACHE_SCOPE}"
+        } >>"$GITHUB_OUTPUT"
+
+    - name: Set up Docker
+      uses: docker/setup-docker-action@v4
+
+    - name: Set up Buildx (docker driver for local base image)
+      id: buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver: docker
+        driver-opts: |
+          containerd-image-store=true
+
+    - name: Log in to GHCR (build cache)
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    - name: Check for reusable content-tagged image
+      if: inputs.content-tag != ''
+      id: check-reuse
+      shell: bash
+      run: |  # shell
+        # If this exact content (Dockerfile/docker-build/docker-assets/
+        # runner-images-src) already built successfully before, skip the
+        # expensive rebuild and pull the existing image instead - it still
+        # gets re-tested below like any other build, just without paying
+        # for docker build again.
+        if docker buildx imagetools inspect "${{ inputs.content-tag }}" >/dev/null 2>&1; then
+          echo "Reusing ${{ inputs.content-tag }} - content unchanged since it was last built."
+          echo "reused=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "reused=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Build image
+      if: inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
+      uses: docker/build-push-action@v6
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      with:
+        builder: ${{ steps.buildx.outputs.name }}
+        context: .
+        load: true
+        target: ${{ inputs.build-target }}
+        tags: ${{ inputs.image-tag }}
+        cache-from: |
+          type=registry,ref=ghcr.io/${{ github.repository_owner }}/gha-runner-compose-cache:${{ steps.setup-context.outputs.cache_scope }}
+        cache-to: |
+          type=registry,ref=ghcr.io/${{ github.repository_owner }}/gha-runner-compose-cache:${{ steps.setup-context.outputs.cache_scope }},mode=max,image-manifest=true
+        build-args: |
+          RUNNER_COMPONENTS=${{ inputs.runner-components }}
+          ${{ inputs.additional-build-args }}
+        secrets: |
+          id=GITHUB_TOKEN,env=GITHUB_TOKEN
+
+    - name: Pull reused content-tagged image
+      if: steps.check-reuse.outputs.reused == 'true'
+      shell: bash
+      run: |  # shell
+        # Pull reused content-tagged image
+        docker pull "${{ inputs.content-tag }}"
+        docker tag "${{ inputs.content-tag }}" "${IMAGE_TAG}"
+
+    - name: Verify image was built
+      shell: bash
+      run: |  # shell
+        # Verify image was built
+        docker image ls "${IMAGE_TAG}"
+        docker image inspect "${IMAGE_TAG}" --format='{{json .}}' | jq '.RepoTags, .Size'
+
+    - name: Start runner container
+      if: inputs.skip-runner != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |  # shell
+        # Start runner container
+        if [[ -z "${GH_TOKEN}" ]]; then
+          echo "❌ 'github-token' input is required when skip-runner is false."
+          exit 1
+        fi
+
+        TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
+        docker run -d --name "${CONTAINER_NAME}" \
+          -e RUNNER_REPO_URL="${{ github.server_url }}/${{ github.repository }}" \
+          -e RUNNER_TOKEN="${TOKEN}" \
+          -e RUNNER_NAME="${RUNNER_NAME}" \
+          -e RUNNER_LABELS="${RUNNER_LABELS}" \
+          "${IMAGE_TAG}"
+
+    - name: Wait for runner registration and execution
+      if: inputs.skip-runner != 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |  # shell
+        # Wait for runner registration and execution
+        if [[ -z "${GITHUB_TOKEN}" ]]; then
+          echo "❌ 'github-token' input is required when skip-runner is false."
+          exit 1
+        fi
+
+        TEST_JOB_NAME="${{ inputs.test-job-name }}"
+        if [[ -z "${TEST_JOB_NAME}" ]]; then
+          echo "❌ 'test-job-name' input is required when skip-runner is false."
+          exit 1
+        fi
+
+        counter=0
+        while true; do
+          echo "Waiting for runner readiness..."
+          if ! docker ps --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
+            echo "❌ Runner container ${CONTAINER_NAME} has stopped unexpectedly."
+            echo "Runner logs:"
+            docker logs "${CONTAINER_NAME}" 2>&1
+            exit 1
+          fi
+
+          LOGS=$(docker logs "${CONTAINER_NAME}" 2>&1)
+          if echo "${LOGS}" | grep -q "Listening for Jobs"; then
+            echo "✅ Runner registered successfully."
+            break
+          fi
+
+          counter=$((counter + 1))
+          if [[ ${counter} -ge 30 ]]; then
+            echo "❌ Timeout waiting for runner to register."
+            echo "Runner logs:"
+            echo "${LOGS}"
+            exit 1
+          fi
+
+          sleep 10
+        done
+
+        echo "Waiting for job '${TEST_JOB_NAME}' to complete..."
+        counter=0
+        while true; do
+          JOB_STATUS=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+            --jq ".jobs[] | select(.name == \"${TEST_JOB_NAME}\") | .conclusion")
+
+          if [[ "${JOB_STATUS}" == "success" ]]; then
+            echo "✅ Job '${TEST_JOB_NAME}' completed successfully."
+            break
+          elif [[ "${JOB_STATUS}" == "failure" || "${JOB_STATUS}" == "cancelled" || "${JOB_STATUS}" == "timed_out" ]]; then
+            echo "❌ Job '${TEST_JOB_NAME}' failed with status: ${JOB_STATUS}"
+            exit 1
+          fi
+
+          counter=$((counter + 1))
+          if [[ ${counter} -ge 30 ]]; then
+            echo "❌ Timeout waiting for job '${TEST_JOB_NAME}' to complete."
+            exit 1
+          fi
+
+          sleep 10
+        done
+
+    - name: Push tested image to registry
+      if: inputs.push-image-refs != ''
+      shell: bash
+      run: |  # shell
+        # Push tested image to registry under each given ref (one per line):
+        # a CI-run-scoped ref other jobs in this run pull as their BASE_IMAGE,
+        # and the content-addressed ref future runs check to skip rebuilding
+        # this exact content - also what publish-release.yml promotes
+        # directly on a release, no rebuild or PR-scoped tag needed. Pushing
+        # the content-tag again when reused is a cheap no-op (same digest
+        # already there).
+        while IFS= read -r REF; do
+          [[ -z "${REF}" ]] && continue
+          docker tag "${IMAGE_TAG}" "${REF}"
+          docker push "${REF}"
+        done <<< "${{ inputs.push-image-refs }}"
+
+    - name: Cleanup runner
+      if: always() && inputs.skip-runner != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |  # shell
+        # Cleanup runner
+        docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+
+        if [[ -z "${GH_TOKEN}" ]]; then
+          echo "ℹ️ No GitHub token provided; skipping GitHub API cleanup."
+          exit 0
+        fi
+
+        RUNNER_ID=$(gh api "repos/${{ github.repository }}/actions/runners" \
+          --jq ".runners[] | select(.name == \"${RUNNER_NAME}\") | .id" 2>/dev/null || echo "")
+
+        if [[ -n "${RUNNER_ID}" ]]; then
+          echo "Removing runner with ID: ${RUNNER_ID}"
+          gh api --method DELETE "repos/${{ github.repository }}/actions/runners/${RUNNER_ID}" >/dev/null 2>&1 || true
+        else
+          echo "Runner ${RUNNER_NAME} not found or already removed."
+        fi
+
+    - name: Warn if dependent job is still waiting
+      if: failure() && inputs.skip-runner != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |  # shell
+        # Surface whether the dependent test job is orphaned (its runner will
+        # never register since this build failed). Cleanup happens in the
+        # "Sweep orphaned dependent jobs" step below, not here.
+        if [[ -z "${GH_TOKEN}" ]]; then
+          echo "ℹ️ No GitHub token provided; skipping dependent job check."
+          exit 1
+        fi
+
+        TEST_JOB_NAME="${{ inputs.test-job-name }}"
+        if [[ -z "${TEST_JOB_NAME}" ]]; then
+          echo "ℹ️ No test job name provided; skipping dependent job check."
+          exit 1
+        fi
+
+        JOB_JSON=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+          --jq ".jobs[] | select(.name == \"${TEST_JOB_NAME}\")") || true
+
+        if [[ -z "${JOB_JSON}" ]]; then
+          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' not found."
+          exit 1
+        fi
+
+        JOB_STATUS=$(jq -r '.status // ""' <<<"${JOB_JSON}")
+        JOB_CONCLUSION=$(jq -r '.conclusion // ""' <<<"${JOB_JSON}")
+
+        if [[ "${JOB_STATUS}" == "queued" || "${JOB_STATUS}" == "in_progress" ]] && [[ -z "${JOB_CONCLUSION}" ]]; then
+          echo "❌ Dependent job '${TEST_JOB_NAME}' still ${JOB_STATUS} and will never get a runner; it will be swept up once every build job in this run has finished."
+        else
+          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' status='${JOB_STATUS}' conclusion='${JOB_CONCLUSION}'."
+        fi
+
+        exit 1
+
+    - name: Sweep orphaned dependent jobs
+      if: always() && inputs.skip-runner != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |  # shell
+        # A failed build leaves its self-hosted test job queued forever - no
+        # matching runner will ever register, and GitHub only auto-cancels
+        # self-hosted queued jobs after 24-48h (timeout-minutes only bounds
+        # execution time once a runner picks the job up, not queue time).
+        # Runs on every invocation - success or failure - so whichever build
+        # job finishes last sweeps up any earlier stragglers. Only cancels
+        # once every OTHER build job in the run has reached a terminal state,
+        # so a category still actively building is never interrupted (that's
+        # what caused the mass-cancellation bug this replaced). This job's
+        # own entry is excluded from that check: it can never see its own
+        # conclusion while still running this step, so counting it would
+        # make the check impossible to satisfy.
+        if [[ -z "${GH_TOKEN}" ]]; then
+          exit 0
+        fi
+
+        OWN_JOB_NAME="${{ inputs.own-job-name }}"
+        ALL_JOBS=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs') || exit 0
+
+        BUILDS_PENDING=$(jq --arg own "${OWN_JOB_NAME}" '[.[] | select((.name | startswith("Test Runner (") | not) and (.name != $own) and (.status == "queued" or .status == "in_progress") and (.conclusion == null))] | length' <<<"${ALL_JOBS}")
+        ORPHANED_TESTS=$(jq -r '[.[] | select((.name | startswith("Test Runner (")) and (.status == "queued" or .status == "in_progress") and (.conclusion == null)) | .name]' <<<"${ALL_JOBS}")
+        ORPHANED_COUNT=$(jq 'length' <<<"${ORPHANED_TESTS}")
+
+        if [[ "${BUILDS_PENDING}" -eq 0 && "${ORPHANED_COUNT}" -gt 0 ]]; then
+          echo "❌ All build jobs are done but ${ORPHANED_COUNT} test job(s) are still queued with no runner coming: $(jq -r 'join(", ")' <<<"${ORPHANED_TESTS}")."
+          echo "Cancelling workflow ${GITHUB_RUN_ID} so they resolve instead of sitting queued for up to 24-48h."
+          gh run cancel "${GITHUB_RUN_ID}" || true
+        fi

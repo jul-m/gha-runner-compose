@@ -1,0 +1,133 @@
+name: "Build Large Tier Image"
+description: "Builds one medium/large/xlarge/all tier on the persistent self-hosted BuildKit builder, pushing straight to GHCR staging (never a local registry)"
+author: "jul-m"
+
+inputs:
+  tier:
+    description: "Tier name (medium, large, xlarge, all) - used for tagging and cache scoping"
+    required: true
+  arch:
+    description: "Target architecture (amd64 or arm64)"
+    required: true
+  base-image:
+    description: "Full BASE_IMAGE ref to build FROM (the previous tier's staging tag, or the build-category image for medium)"
+    required: true
+  runner-components:
+    description: "RUNNER_COMPONENTS value passed during build"
+    required: true
+  smoke-test-cmd:
+    description: "Bash command run inside the built image to smoke-test it"
+    required: true
+  staging-img:
+    description: "Full staging image ref, e.g. ghcr.io/owner/gha-runner-compose-staging"
+    required: true
+  ci-run-tag:
+    description: "Run-scoped tag prefix, e.g. ci-12345"
+    required: true
+  registry:
+    description: "Registry namespace used for the --cache-from fallback ref, e.g. ghcr.io/owner"
+    required: true
+  github-token:
+    description: "Token passed as the GITHUB_TOKEN build secret (private component downloads)"
+    required: true
+  builder-name:
+    description: "Name of the persistent docker-container buildx builder"
+    required: false
+    default: "gha-large-runner-builder"
+  content-tag:
+    description: "Full content-addressed registry ref (e.g. staging:content-<hash>-medium-amd64). If it already exists, skip the rebuild and pull it instead - still re-smoke-tested below either way."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - id: setup-context
+      shell: bash
+      run: |  # shell
+        # Setup context variables
+        PLATFORM="linux/${{ inputs.arch }}"
+        IMAGE_REF="${{ inputs.staging-img }}:${{ inputs.ci-run-tag }}-${{ inputs.tier }}-${{ inputs.arch }}"
+        {
+          echo "PLATFORM=${PLATFORM}"
+          echo "IMAGE_REF=${IMAGE_REF}"
+        } >>"$GITHUB_ENV"
+
+    - name: Ensure persistent BuildKit builder exists
+      shell: bash
+      run: |  # shell
+        # Idempotent: internal cache survives across jobs/runs on this runner,
+        # no --cache-to needed. --cache-from GHCR is used as fallback on cold cache.
+        docker buildx inspect "${{ inputs.builder-name }}" >/dev/null 2>&1 || \
+          docker buildx create \
+            --name "${{ inputs.builder-name }}" \
+            --driver docker-container \
+            --driver-opt network=host \
+            --config tools/buildkitd.toml \
+            --bootstrap
+
+    - name: Check for reusable content-tagged image
+      if: inputs.content-tag != ''
+      id: check-reuse
+      shell: bash
+      run: |  # shell
+        # If this exact content already built successfully before, skip the
+        # expensive rebuild and pull the existing image instead - it still
+        # gets re-smoke-tested below like any other build.
+        if docker buildx imagetools inspect "${{ inputs.content-tag }}" >/dev/null 2>&1; then
+          echo "Reusing ${{ inputs.content-tag }} - content unchanged since it was last built."
+          echo "reused=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "reused=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Build, push and load ${{ inputs.tier }} image (${{ inputs.arch }})
+      if: steps.check-reuse.outputs.reused != 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |  # shell
+        # Build straight FROM the previous tier's staging tag and export to BOTH
+        # the registry (type=registry, the durable artifact) and the host's own
+        # Docker store (type=docker, so the smoke-test step below can `docker run`
+        # it) in the same build - one push, zero re-download. Confirmed empirically
+        # that the docker-container driver supports this dual-output combo and
+        # that `type=docker` really lands in the host daemon (bind-mounted
+        # /var/run/docker.sock), not just the builder's own internal store.
+        # Also tags the content-addressed ref in the same push, when given -
+        # so future runs with identical content can skip rebuilding this tier.
+        TAGS=(-t "${IMAGE_REF}")
+        if [[ -n "${{ inputs.content-tag }}" ]]; then
+          TAGS+=(-t "${{ inputs.content-tag }}")
+        fi
+        docker buildx build --builder "${{ inputs.builder-name }}" --platform "${PLATFORM}" --target runner-build \
+          --build-arg "BASE_IMAGE=${{ inputs.base-image }}" \
+          --build-arg "RUNNER_COMPONENTS=${{ inputs.runner-components }}" \
+          --cache-from "type=registry,ref=${{ inputs.registry }}/gha-runner-compose-cache:${{ inputs.tier }}-${{ inputs.arch }}" \
+          --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
+          --output type=registry \
+          --output type=docker \
+          "${TAGS[@]}" .
+
+    - name: Pull reused content-tagged image
+      if: steps.check-reuse.outputs.reused == 'true'
+      shell: bash
+      run: |  # shell
+        # Pull reused content-tagged image
+        docker pull --platform "${PLATFORM}" "${{ inputs.content-tag }}"
+        docker tag "${{ inputs.content-tag }}" "${IMAGE_REF}"
+
+    - name: Smoke-test ${{ inputs.tier }} image (${{ inputs.arch }})
+      shell: bash
+      run: |  # shell
+        # Already loaded into the host's Docker store by the dual-output build
+        # above - no pull needed here.
+        docker run --rm --platform "${PLATFORM}" --entrypoint bash "${IMAGE_REF}" -c '${{ inputs.smoke-test-cmd }}'
+
+    - name: Clean up local copy
+      if: always()
+      shell: bash
+      run: |  # shell
+        # Free disk on the self-hosted runner - only the local host-store pull
+        # from the smoke-test step above; the actual image stays in GHCR staging.
+        docker rmi -f "${IMAGE_REF}" 2>/dev/null || true

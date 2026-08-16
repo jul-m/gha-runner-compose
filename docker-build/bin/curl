@@ -18,16 +18,33 @@ if [ "${GITHUB_TOKEN:-}" = "" ] && [ -f /run/secrets/GITHUB_TOKEN ]; then
 fi
 
 # Determine if we should inject an Authorization header.
-# Simplified logic: inject token if GITHUB_TOKEN exists and any URL is a GitHub domain.
-# This avoids complex parsing of existing headers which is error-prone in POSIX sh.
+# Only do it for GitHub URLs when the caller did not already provide one.
 should_add_auth=0
 if [ "${GITHUB_TOKEN:-}" != "" ]; then
-  # Look for a GitHub-like URL in args
+  have_auth_header=0
+  SKIP_HEADER_VALUE=0
   for candidate in "$@"; do
+    if [ $SKIP_HEADER_VALUE -eq 1 ]; then
+      case "$candidate" in
+        [Aa]uthorization:*)
+          have_auth_header=1
+          ;;
+      esac
+      SKIP_HEADER_VALUE=0
+      continue
+    fi
+
     case "$candidate" in
+      -H|--header)
+        SKIP_HEADER_VALUE=1
+        ;;
+      -H[Aa]uthorization:*|--header=[Aa]uthorization:*)
+        have_auth_header=1
+        ;;
       https://github.com/*|https://api.github.com/*|https://raw.githubusercontent.com/*|https://objects.githubusercontent.com/*)
-        should_add_auth=1
-        break
+        if [ $have_auth_header -eq 0 ]; then
+          should_add_auth=1
+        fi
         ;;
     esac
   done
@@ -118,7 +135,7 @@ while [ $i -le $# ]; do
       i=$((i+1))
       eval OUT="\${$i:-}"
       ;;
-    *o-*)
+    -*o-*)
       # combined short options containing o- (e.g. -fsSo-)
       OUT="-"
       ;;
@@ -200,6 +217,15 @@ if [ $HAS_W -eq 1 ] && [ "${W_VAL}" = "%{http_code}" ]; then
     cp -f "$OUT" "$CACHE_FILE"
   fi
   exit "$CURL_EXIT"
+fi
+
+# -w with any format other than %{http_code} needs its exact stdout output
+# preserved (e.g. %{url_effective} to resolve a redirect target); the cache
+# rewrite below only knows how to reproduce %{http_code}, so passthrough
+# rather than silently dropping the caller's requested output.
+if [ $HAS_W -eq 1 ]; then
+  run_real_curl "$@"
+  exit $?
 fi
 
 # No -w: standard cache flow using our own fetch helper.

@@ -7,6 +7,16 @@
 
 # Source the helpers for use with the script
 source $HELPER_SCRIPTS/install.sh
+source $HELPER_SCRIPTS/os.sh
+
+if is_x64; then
+  docker_arch="amd64"
+elif is_arm64; then
+  docker_arch="arm64"
+else
+  echo "Unsupported architecture"
+  exit 1
+fi
 
 REPO_URL="https://download.docker.com/linux/ubuntu"
 GPG_KEY="/usr/share/keyrings/docker.gpg"
@@ -14,7 +24,7 @@ REPO_PATH="/etc/apt/sources.list.d/docker.list"
 os_codename=$(lsb_release -cs)
 
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o $GPG_KEY
-echo "deb [arch=amd64 signed-by=$GPG_KEY] $REPO_URL ${os_codename} stable" > $REPO_PATH
+echo "deb [arch=$docker_arch signed-by=$GPG_KEY] $REPO_URL ${os_codename} stable" > $REPO_PATH
 apt-get update
 
 # Install docker components which available via apt-get
@@ -64,30 +74,21 @@ systemctl is-enabled --quiet docker.service || systemctl enable docker.service
 sleep 10
 docker info
 
-if [[ "${DOCKERHUB_PULL_IMAGES:-yes}" == "yes" ]]; then
-    # If credentials are provided, attempt to log into Docker Hub
-    # with a paid account to avoid Docker Hub's rate limit.
-    if [[ "${DOCKERHUB_LOGIN}" ]] && [[ "${DOCKERHUB_PASSWORD}" ]]; then
-        docker login --username "${DOCKERHUB_LOGIN}" --password "${DOCKERHUB_PASSWORD}"
-    fi
+if ! is_ubuntu22; then
+    # Pull Dependabot docker image
+    docker pull ghcr.io/dependabot/dependabot-updater-core:latest
 
-    # Pull images
-    images=$(get_toolset_value '.docker.images[]')
-    for image in $images; do
-        docker pull "$image"
-    done
-
-    # Always attempt to logout so we do not leave our credentials on the built
-    # image. Logout _should_ return a zero exit code even if no credentials were
-    # stored from earlier.
-    docker logout
-else
-    echo "Skipping docker images pulling"
+    # Pull AW docker images
+    docker pull ghcr.io/github/gh-aw-mcpg:latest
+    docker pull ghcr.io/github/gh-aw-firewall/agent:latest
+    docker pull ghcr.io/github/gh-aw-firewall/api-proxy:latest
+    docker pull ghcr.io/github/gh-aw-firewall/squid:latest
+    docker pull ghcr.io/github/github-mcp-server:latest
 fi
 
 # Download amazon-ecr-credential-helper
 aws_latest_release_url="https://api.github.com/repos/awslabs/amazon-ecr-credential-helper/releases/latest"
-aws_helper_url=$(curl -fsSL "${aws_latest_release_url}" | jq -r '.body' | awk -F'[()]' '/linux-amd64/ {print $2}')
+aws_helper_url=$(curl -fsSL "${aws_latest_release_url}" | jq -r '.body' | awk -F'[()]' '/linux-'"${docker_arch}"'/ {print $2}')
 aws_helper_binary_path=$(download_with_retry "$aws_helper_url")
 
 # Supply chain security - amazon-ecr-credential-helper
@@ -102,6 +103,3 @@ rm $GPG_KEY
 rm $REPO_PATH
 
 invoke_tests "Tools" "Docker"
-if [[ "${DOCKERHUB_PULL_IMAGES:-yes}" == "yes" ]]; then
-    invoke_tests "Tools" "Docker images"
-fi

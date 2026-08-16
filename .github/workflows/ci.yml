@@ -1,0 +1,374 @@
+name: CI
+run-name: "CI - ${{ github.event_name }} - #${{ github.run_number }}"
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    types: [synchronize, opened, reopened, edited]
+  push:
+    branches: [main]
+  # Runs after the automated upstream-sync workflow so its bot-authored PR
+  # (update-runner-images) gets tested without needing manual "Approve and
+  # run" clicks: pull_request runs from github-actions[bot] require approval
+  # on every push (GitHub security change, June 2026), but workflow_run runs
+  # inherit the trust of the triggering workflow (schedule/workflow_dispatch)
+  # and are not subject to that gate.
+  workflow_run:
+    workflows: ["Update Upstream Sources"]
+    types: [completed]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Every base/essentials/build-category image is pushed under a content-
+  # addressed GHCR tag (content-<hash>-<name>-<arch>, see check-target's
+  # "Compute content hash" step) once tested, so the next stage pulls it
+  # directly as its BASE_IMAGE build-arg - and, since the tag is a function
+  # of content rather than this run's ID, a later run with identical inputs
+  # skips rebuilding entirely (see the composite action's content-tag input).
+  # Everything transient (intra-run hand-off, release-PR staging) lives in this
+  # package, which this workflow creates and therefore has write access to by
+  # default - gha-runner-compose(-base) are the public release artifacts and
+  # must only ever be written by publish-release.yml, at an actual release.
+  STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
+
+# Concurrent runs on the same ref would race writes to the same GHCR cache
+# tag per scope (and, for release PRs, the same staging image tag) - cancel
+# the superseded run instead of letting them clobber each other.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Resolves which ref to test. For workflow_run, that's always the fixed
+  # `update-runner-images` branch used by Update Upstream Sources - skip
+  # gracefully if it doesn't currently exist (e.g. nothing new to sync, or
+  # the previous PR was just merged and the branch deleted).
+  check-target:
+    name: Resolve target ref
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    outputs:
+      should_run: ${{ steps.resolve.outputs.should_run }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      content_hash: ${{ steps.hash.outputs.content_hash }}
+      exists_json: ${{ steps.exists.outputs.exists_json }}
+      category_matrix: ${{ steps.exists.outputs.category_matrix }}
+    steps:
+      - name: Resolve ref to test
+        id: resolve
+        run: |  # shell
+          # Resolve the ref to test
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            if git ls-remote --exit-code --heads "${{ github.server_url }}/${{ github.repository }}" update-runner-images >/dev/null 2>&1; then
+              echo "should_run=true" >> "$GITHUB_OUTPUT"
+              echo "ref=update-runner-images" >> "$GITHUB_OUTPUT"
+            else
+              echo "No update-runner-images branch found; nothing to test."
+              echo "should_run=false" >> "$GITHUB_OUTPUT"
+              echo "ref=" >> "$GITHUB_OUTPUT"
+            fi
+          elif [[ "${{ github.event_name }}" == "pull_request" \
+                  && "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+            # This repo's CI never runs for fork-originated PRs, full stop - not
+            # just the self-hosted jobs below. A contributor validates their
+            # change on their own fork's Actions (same workflow file, their own
+            # compute/secrets context); this repo only runs CI for its own
+            # branches and PRs.
+            echo "Fork-originated PR - CI runs on the fork's own Actions, not here."
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "ref=" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout code
+        if: steps.resolve.outputs.should_run == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.resolve.outputs.ref }}
+
+      # Content-addressed instead of run-scoped: git tree/blob OIDs are
+      # already content hashes, so two runs building from identical
+      # Dockerfile/docker-build/docker-assets/runner-images-src content get
+      # the exact same hash regardless of commit history - letting every job
+      # below skip rebuilding anything whose content-tagged image already
+      # exists in gha-runner-compose-staging from a previous run.
+      - name: Compute content hash
+        id: hash
+        if: steps.resolve.outputs.should_run == 'true'
+        run: |  # shell
+          # Compute content hash
+          HASH=$( { git rev-parse HEAD:Dockerfile; git rev-parse HEAD:docker-build; git rev-parse HEAD:docker-assets; git rev-parse HEAD:runner-images-src; } | sha256sum | cut -c1-16)
+          echo "content_hash=${HASH}" >> "$GITHUB_OUTPUT"
+
+      # Checked once here, not per-job: a job whose image already exists is
+      # skipped entirely below (if: fromJSON(...).<name> != true) - no
+      # runner spin-up, no re-test, nothing. The composite action's own
+      # content-tag check stays as a safety net for the rare race where an
+      # image appears between this check and that job actually starting.
+      - name: Check what already exists in staging
+        id: exists
+        if: steps.resolve.outputs.should_run == 'true'
+        run: |  # shell
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          BASE="ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ steps.hash.outputs.content_hash }}"
+          RESULT="{}"
+          # matrix.category isn't available in a job-level `if:` (evaluated
+          # before the matrix expands), so build-test-category/test-category
+          # instead use a dynamically-generated `strategy.matrix.include`
+          # containing only the (category, arch) pairs that actually need
+          # building - a category with nothing to build simply has no matrix
+          # leg at all, the cleanest form of "skip completely".
+          INCLUDE="[]"
+          for NAME in base essentials build cloud java nodejs python container dotnet; do
+            if docker buildx imagetools inspect "${BASE}-${NAME}-amd64" >/dev/null 2>&1 \
+               && docker buildx imagetools inspect "${BASE}-${NAME}-arm64" >/dev/null 2>&1; then
+              RESULT=$(jq -c --arg k "${NAME}" '. + {($k): true}' <<<"${RESULT}")
+            else
+              RESULT=$(jq -c --arg k "${NAME}" '. + {($k): false}' <<<"${RESULT}")
+              if [[ "${NAME}" != "base" && "${NAME}" != "essentials" ]]; then
+                INCLUDE=$(jq -c --arg cat "${NAME}" '. + [{"category":$cat,"arch":"amd64","host-runner":"ubuntu-24.04"},{"category":$cat,"arch":"arm64","host-runner":"ubuntu-24.04-arm"}]' <<<"${INCLUDE}")
+              fi
+            fi
+          done
+          echo "exists_json=${RESULT}" >> "$GITHUB_OUTPUT"
+          echo "category_matrix=${INCLUDE}" >> "$GITHUB_OUTPUT"
+
+  # ── BASE ──────────────────────────────────────────────────────────────────
+  # Builds the OS + runner binary base image and boots a runner to validate it.
+  build-test-base:
+    name: Build and Test Base Image (${{ matrix.arch }})
+    needs: check-target
+    if: needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
+    env:
+      CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-base-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Build base image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose-base:test-${{ matrix.arch }}
+          build-target: base
+          runner-suffix: base-${{ matrix.arch }}
+          cache-scope: base-${{ matrix.arch }}
+          test-job-name: ${{ format('Test Runner (base / {0})', matrix.arch) }}
+          own-job-name: ${{ format('Build and Test Base Image ({0})', matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.CONTENT_TAG }}
+          push-image-refs: |
+            ${{ env.CONTENT_TAG }}
+
+  test-base:
+    name: Test Runner (base / ${{ matrix.arch }})
+    needs: check-target
+    if: needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
+    runs-on: ${{ format('test-runner-base-{0}-{1}', matrix.arch, github.run_id) }}
+    # If the paired build job fails before starting the runner, this job would
+    # otherwise sit queued for the default 6h job timeout with no way to ever
+    # get picked up - fail fast instead.
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - name: Run basic test
+        run: |  # shell
+          # Basic smoke test for base image
+          echo "Hello from self-hosted runner (base / ${{ matrix.arch }})!"
+          uname -a
+
+  # ── ESSENTIALS ────────────────────────────────────────────────────────────
+  # Builds from base, adds git, gh, yq, nodejs-lite, zstd, etc.
+  build-test-essentials:
+    name: Build and Test Essentials Image (${{ matrix.arch }})
+    needs: [check-target, build-test-base]
+    # build-test-base is legitimately skipped when its image already exists
+    # (see check-target) - always() bypasses the implicit success() GitHub
+    # adds to a plain if:, which would otherwise treat "skipped" the same as
+    # "blocked" (see [[gha-runner-compose-large-tiers]] for where this was
+    # first found and fixed). The explicit failure/cancelled checks restore
+    # real failure-blocking.
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
+    env:
+      BASE_CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-base-${{ matrix.arch }}
+      CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-essentials-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Build essentials image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose:essentials-test-${{ matrix.arch }}
+          build-target: runner-build
+          runner-suffix: essentials-${{ matrix.arch }}
+          cache-scope: essentials-${{ matrix.arch }}
+          runner-components: all-essentials
+          additional-build-args: |
+            BASE_IMAGE=${{ env.BASE_CONTENT_TAG }}
+          test-job-name: ${{ format('Test Runner (essentials / {0})', matrix.arch) }}
+          own-job-name: ${{ format('Build and Test Essentials Image ({0})', matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.CONTENT_TAG }}
+          push-image-refs: |
+            ${{ env.CONTENT_TAG }}
+
+  test-essentials:
+    name: Test Runner (essentials / ${{ matrix.arch }})
+    needs: [check-target, build-test-base]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
+    runs-on: ${{ format('test-runner-essentials-{0}-{1}', matrix.arch, github.run_id) }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+          - arch: arm64
+    steps:
+      - name: Run basic test
+        run: |  # shell
+          # Smoke test for essentials image
+          echo "Hello from self-hosted runner (essentials / ${{ matrix.arch }})!"
+          uname -a
+          git --version
+          gh --version
+          yq --version
+
+  # ── PARALLEL CATEGORY IMAGES ──────────────────────────────────────────────
+  # Each category (all-<category>) builds in parallel from the essentials image.
+  # Platform-specific components (x64-only) are silently skipped by the installer
+  # on arm64 — no matrix exclusions needed.
+  build-test-category:
+    name: Build and Test ${{ matrix.category }} Image (${{ matrix.arch }})
+    needs: [check-target, build-test-essentials]
+    # Only the 7 categories actually published as standalone thematic images
+    # (see docs/images.md / tools/prebuilt-images.csv) ever appear in
+    # category_matrix - the other runner-images-src categories (ruby, rust,
+    # databases, browser, haskell, swift, php, web, julia, r, ...) only ship
+    # bundled inside the medium/large/xlarge/all aggregate tiers, which
+    # nothing in this workflow builds yet. A category whose image already
+    # exists for this content hash simply has no entry in the list, so no
+    # leg of this job runs for it at all - see check-target.
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 30
+    env:
+      ESSENTIALS_CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-essentials-${{ matrix.arch }}
+      CONTENT_TAG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ needs.check-target.outputs.content_hash }}-${{ matrix.category }}-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.check-target.outputs.category_matrix) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check-target.outputs.ref }}
+
+      - name: Build ${{ matrix.category }} image (${{ matrix.arch }})
+        uses: ./.github/actions/test-runner-image
+        with:
+          image-tag: gha-runner-compose:${{ matrix.category }}-test-${{ matrix.arch }}
+          build-target: runner-build
+          runner-suffix: ${{ matrix.category }}-${{ matrix.arch }}
+          cache-scope: ${{ matrix.category }}-${{ matrix.arch }}
+          runner-components: all-${{ matrix.category }}
+          additional-build-args: |
+            BASE_IMAGE=${{ env.ESSENTIALS_CONTENT_TAG }}
+          test-job-name: ${{ format('Test Runner ({0} / {1})', matrix.category, matrix.arch) }}
+          own-job-name: ${{ format('Build and Test {0} Image ({1})', matrix.category, matrix.arch) }}
+          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          content-tag: ${{ env.CONTENT_TAG }}
+          # "build"'s content-tag is what ci-large-tiers.yml's medium tier
+          # reuses as its BASE_IMAGE (see that workflow's header comment).
+          push-image-refs: |
+            ${{ env.CONTENT_TAG }}
+
+  test-category:
+    name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
+    needs: [check-target, build-test-essentials]
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
+    runs-on: ${{ format('test-runner-{0}-{1}-{2}', matrix.category, matrix.arch, github.run_id) }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.check-target.outputs.category_matrix) }}
+    steps:
+      - name: Run smoke test
+        run: |  # shell
+          # Smoke test for ${{ matrix.category }} image
+          echo "Hello from self-hosted runner (${{ matrix.category }} / ${{ matrix.arch }})!"
+          uname -a
+
+  # ── CLEANUP ──────────────────────────────────────────────────────────────────
+  # base/essentials/every category push a content-addressed version to
+  # gha-runner-compose-staging so the next stage can pull it as a BASE_IMAGE
+  # and so future runs with identical content skip rebuilding it entirely.
+  # Versions older than 7 days are pruned here; a content-tag that's still
+  # being reused gets its `updated_at` refreshed on every reuse (the push
+  # step re-pushes it, a cheap no-op for unchanged content), so only tags
+  # nothing has referenced in 7+ days actually get pruned.
+  cleanup-ci-images:
+    name: Clean up CI-run-scoped images
+    needs: [check-target, build-test-base, build-test-essentials, build-test-category]
+    if: always() && needs.check-target.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete staging versions older than 7 days
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # gha-runner-compose-staging is created by this workflow (via the
+          # default token), which auto-grants this repo admin rights on it -
+          # unlike gha-runner-compose(-base), which this workflow never
+          # writes to at all now, so no permission gap to work around here.
+          #
+          # Keep images for 7 days: GHCR layer deduplication (content-addressable
+          # blobs) means subsequent runs skip re-uploading layers already present
+          # in the registry, even under a different tag/run ID.
+          CUTOFF=$(date -u -d '7 days ago' +%s 2>/dev/null || date -u -v-7d +%s)
+          VERSION_IDS=$(gh api --paginate "/user/packages/container/gha-runner-compose-staging/versions" \
+            --jq ".[] | select((.updated_at | fromdateiso8601) < ${CUTOFF}) | .id" 2>/dev/null || true)
+          if [ -z "${VERSION_IDS}" ]; then
+            echo "No staging versions older than 7 days to delete."
+          fi
+          for ID in ${VERSION_IDS}; do
+            echo "Deleting gha-runner-compose-staging version ${ID} (older than 7 days)"
+            gh api --method DELETE "/user/packages/container/gha-runner-compose-staging/versions/${ID}" 2>/dev/null \
+              || echo "  ⚠️ Failed to delete version ${ID}."
+          done
