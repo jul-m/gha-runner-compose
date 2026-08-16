@@ -304,7 +304,7 @@ jobs:
     # nothing in this workflow builds yet. A category whose image already
     # exists for this content hash simply has no entry in the list, so no
     # leg of this job runs for it at all - see check-target.
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled'
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
     env:
@@ -343,7 +343,7 @@ jobs:
   test-category:
     name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
     needs: [check-target, build-test-essentials]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled'
+    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
     runs-on: ${{ format('test-runner-{0}-{1}-{2}', matrix.category, matrix.arch, github.run_id) }}
     timeout-minutes: 15
     strategy:
