@@ -12,6 +12,10 @@
 ################################################################################
 
 source "$LOCAL_INSTALL/helpers.sh"
+# Local scripts run as a separate `bash` process (see process_component()), so
+# the helpers sourced by install-components.sh's main shell aren't inherited -
+# unlike upstream install-*.sh scripts, which source this themselves.
+source "$HELPER_SCRIPTS/install.sh"
 
 if is_arm64; then
     arch_suffix="arm64"
