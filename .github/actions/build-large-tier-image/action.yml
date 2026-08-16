@@ -34,14 +34,6 @@ inputs:
     description: "Name of the persistent docker-container buildx builder"
     required: false
     default: "gha-large-runner-builder"
-  is-release-pr:
-    description: "Set to 'true' to also stage the built image under a PR-numbered tag"
-    required: false
-    default: "false"
-  pr-number:
-    description: "PR number used for the release-PR staging tag (required when is-release-pr is true)"
-    required: false
-    default: ""
   content-tag:
     description: "Full content-addressed registry ref (e.g. staging:content-<hash>-medium-amd64). If it already exists, skip the rebuild and pull it instead - still re-smoke-tested below either way."
     required: false
@@ -131,16 +123,6 @@ runs:
         # Already loaded into the host's Docker store by the dual-output build
         # above - no pull needed here.
         docker run --rm --platform "${PLATFORM}" --entrypoint bash "${IMAGE_REF}" -c '${{ inputs.smoke-test-cmd }}'
-
-    - name: Stage ${{ inputs.tier }} image for release PR
-      if: inputs.is-release-pr == 'true'
-      shell: bash
-      run: |  # shell
-        # Manifest-only retag via imagetools: publish-release.yml promotes this
-        # tag once the PR merges. No blobs are re-uploaded - same content, new tag.
-        docker buildx imagetools create \
-          --tag "${{ inputs.staging-img }}:pr${{ inputs.pr-number }}-${{ inputs.tier }}-${{ inputs.arch }}" \
-          "${IMAGE_REF}"
 
     - name: Clean up local copy
       if: always()

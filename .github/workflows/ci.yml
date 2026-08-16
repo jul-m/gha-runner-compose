@@ -53,8 +53,6 @@ jobs:
     outputs:
       should_run: ${{ steps.resolve.outputs.should_run }}
       ref: ${{ steps.resolve.outputs.ref }}
-      is_release_pr: ${{ steps.resolve.outputs.is_release_pr }}
-      pr_number: ${{ steps.resolve.outputs.pr_number }}
       content_hash: ${{ steps.hash.outputs.content_hash }}
       exists_json: ${{ steps.exists.outputs.exists_json }}
       category_matrix: ${{ steps.exists.outputs.category_matrix }}
@@ -85,23 +83,6 @@ jobs:
           else
             echo "should_run=true" >> "$GITHUB_OUTPUT"
             echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-          fi
-
-          # A main -> release PR is the trigger that promotes tested images to
-          # GHCR staging tags, picked up and retagged by publish-release.yml
-          # once the PR is merged - no rebuild needed at that point. Also
-          # requires the PR's head to be this same repo (not a fork): this
-          # flag gates jobs that run on our self-hosted runner, and a
-          # fork-originated PR must never be able to trigger code execution
-          # there.
-          if [[ "${{ github.event_name }}" == "pull_request" \
-                && "${{ github.event.pull_request.base.ref }}" == "release" \
-                && "${{ github.event.pull_request.head.repo.full_name }}" == "${{ github.repository }}" ]]; then
-            echo "is_release_pr=true" >> "$GITHUB_OUTPUT"
-            echo "pr_number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_release_pr=false" >> "$GITHUB_OUTPUT"
-            echo "pr_number=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Checkout code
@@ -194,7 +175,6 @@ jobs:
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: |
             ${{ env.CONTENT_TAG }}
-            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-base-{2}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-base:
     name: Test Runner (base / ${{ matrix.arch }})
@@ -265,7 +245,6 @@ jobs:
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: |
             ${{ env.CONTENT_TAG }}
-            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-essentials-{2}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.arch) || '' }}
 
   test-essentials:
     name: Test Runner (essentials / ${{ matrix.arch }})
@@ -338,7 +317,6 @@ jobs:
           # reuses as its BASE_IMAGE (see that workflow's header comment).
           push-image-refs: |
             ${{ env.CONTENT_TAG }}
-            ${{ needs.check-target.outputs.is_release_pr == 'true' && format('{0}:pr{1}-{2}-{3}', env.STAGING_IMG, needs.check-target.outputs.pr_number, matrix.category, matrix.arch) || '' }}
 
   test-category:
     name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})

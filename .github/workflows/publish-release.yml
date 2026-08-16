@@ -1,11 +1,13 @@
 name: Publish Release
 
-# Runs when a main -> release PR is merged. It does not rebuild anything: the
-# images were already built and tested by ci.yml during that PR (staged to
-# GHCR under a `staging-<image>-pr<N>-<arch>` tag), so this just combines the
-# two per-arch staging tags into one multi-arch manifest under the release
-# date tag, then opens the prerelease for finalize-release.yml to promote
-# later.
+# Runs when a main -> release PR is merged. It does not rebuild anything: every
+# image was already built (or reused unchanged) and tested by ci.yml /
+# ci-large-tiers.yml, staged to GHCR under a content-addressed
+# `content-<hash>-<name>-<arch>` tag (see those workflows' "Compute content
+# hash" step - identical formula, so the same source tree always yields the
+# same tag here). This just combines the two per-arch content tags into one
+# multi-arch manifest under the release date tag, then opens the prerelease
+# for finalize-release.yml to promote later.
 run-name: "Publish Release - #${{ github.run_number }}"
 
 on:
@@ -60,6 +62,18 @@ jobs:
           echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "TAG=${TAG}" >> "$GITHUB_OUTPUT"
 
+      # Same formula as ci.yml/ci-large-tiers.yml's "Compute content hash" -
+      # the merge into release doesn't change Dockerfile/docker-build/
+      # docker-assets/runner-images-src content, so this always matches the
+      # content tag those workflows already staged, whether it was built
+      # fresh during this PR or reused unchanged from an earlier run.
+      - name: Compute content hash
+        id: hash
+        run: |  # shell
+          # Compute content hash
+          HASH=$( { git rev-parse HEAD:Dockerfile; git rev-parse HEAD:docker-build; git rev-parse HEAD:docker-assets; git rev-parse HEAD:runner-images-src; } | sha256sum | cut -c1-16)
+          echo "content_hash=${HASH}" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -69,27 +83,27 @@ jobs:
 
       - name: Promote base image
         env:
-          PR_NUMBER: ${{ steps.resolve.outputs.PR_NUMBER }}
+          CONTENT_HASH: ${{ steps.hash.outputs.content_hash }}
           TAG: ${{ steps.resolve.outputs.TAG }}
         run: |  # shell
-          # Combine the amd64/arm64 staging tags into one multi-arch manifest
+          # Combine the amd64/arm64 content-tagged staging images into one multi-arch manifest
           docker buildx imagetools create \
             --tag "${REGISTRY}/${BASE_IMG_NAME}-${TAG}" \
-            "${STAGING_IMG}:pr${PR_NUMBER}-base-amd64" \
-            "${STAGING_IMG}:pr${PR_NUMBER}-base-arm64"
+            "${STAGING_IMG}:content-${CONTENT_HASH}-base-amd64" \
+            "${STAGING_IMG}:content-${CONTENT_HASH}-base-arm64"
 
       - name: Promote essentials and category images
         env:
-          PR_NUMBER: ${{ steps.resolve.outputs.PR_NUMBER }}
+          CONTENT_HASH: ${{ steps.hash.outputs.content_hash }}
           TAG: ${{ steps.resolve.outputs.TAG }}
         run: |  # shell
-          # Combine the amd64/arm64 staging tags into one multi-arch manifest per image
+          # Combine the amd64/arm64 content-tagged staging images into one multi-arch manifest per image
           for SHORT in essentials ${PUBLISHED_CATEGORIES} ${LARGE_TIERS}; do
             echo "Promoting ${SHORT}"
             docker buildx imagetools create \
               --tag "${REGISTRY}/${RUNNER_IMG_NAME}-${SHORT}-${TAG}" \
-              "${STAGING_IMG}:pr${PR_NUMBER}-${SHORT}-amd64" \
-              "${STAGING_IMG}:pr${PR_NUMBER}-${SHORT}-arm64"
+              "${STAGING_IMG}:content-${CONTENT_HASH}-${SHORT}-amd64" \
+              "${STAGING_IMG}:content-${CONTENT_HASH}-${SHORT}-arm64"
           done
 
       - name: Tag release and open prerelease
