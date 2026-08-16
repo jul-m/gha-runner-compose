@@ -273,10 +273,11 @@ runs:
       run: |  # shell
         # Push tested image to registry under each given ref (one per line):
         # a CI-run-scoped ref other jobs in this run pull as their BASE_IMAGE,
-        # the content-addressed ref future runs check to skip rebuilding this
-        # exact content, and, on release PRs, an additional PR-scoped ref.
-        # Pushing the content-tag again when reused is a cheap no-op (same
-        # digest already there).
+        # and the content-addressed ref future runs check to skip rebuilding
+        # this exact content - also what publish-release.yml promotes
+        # directly on a release, no rebuild or PR-scoped tag needed. Pushing
+        # the content-tag again when reused is a cheap no-op (same digest
+        # already there).
         while IFS= read -r REF; do
           [[ -z "${REF}" ]] && continue
           docker tag "${IMAGE_TAG}" "${REF}"
