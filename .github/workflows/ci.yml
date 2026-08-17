@@ -20,7 +20,13 @@ env:
   STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
 
 concurrency:
-  group: ci-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
+  # Stable per PR / per workflow_run source branch / per ref (NOT per commit
+  # SHA, which changes every push and would never let cancel-in-progress
+  # cancel anything) - workflow_run keys on its own head_branch, not the
+  # ambient ref, so a run triggered by "Update Upstream Sources" completing
+  # never shares a group with an unrelated PR/push run that happens to share
+  # the same ref.
+  group: ci-${{ github.event.pull_request.number || github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: true
 
 jobs:
