@@ -31,6 +31,7 @@ spec:
       command: ["sleep", "3600"]
 EOF
 
-# --validate defaults to fetching the OpenAPI schema from a live cluster even
-# under --dry-run=client (there's no cluster reachable here) - turn it off.
-kubectl apply --dry-run=client --validate=false -f "$WORKDIR/pod.yaml"
+# `apply` (unlike `create`) always checks for the resource's existing live
+# state for its merge logic, even under --dry-run=client - hits the API
+# server regardless of --validate. `create` doesn't need that round-trip.
+kubectl create --dry-run=client --validate=false -f "$WORKDIR/pod.yaml"
