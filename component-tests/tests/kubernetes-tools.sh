@@ -1,8 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# No cluster/API server is reachable here, so only client-side checks: version
-# output and kubectl's local, offline manifest validation (--dry-run=client).
+# No cluster/API server is reachable here. kubectl's dry-run=client still
+# needs a live server for RESTMapper discovery regardless of --validate or
+# apply vs create (confirmed: kubernetes/kubectl#991) - offline manifest
+# validation isn't possible with kubectl alone, so client-side checks only.
 
 kubectl version --client
 helm version
@@ -13,25 +15,3 @@ kustomize version
 # minikube binary with a lightweight shim (only 'version --short' is
 # meaningful there) - this call is safe against both.
 minikube version --short
-
-WORKDIR=$(mktemp -d)
-trap 'rm -rf "$WORKDIR"' EXIT
-
-cat > "$WORKDIR/pod.yaml" <<'EOF'
-apiVersion: v1
-kind: Pod
-metadata:
-  name: test-pod
-  labels:
-    app: test
-spec:
-  containers:
-    - name: test-container
-      image: busybox:latest
-      command: ["sleep", "3600"]
-EOF
-
-# `apply` (unlike `create`) always checks for the resource's existing live
-# state for its merge logic, even under --dry-run=client - hits the API
-# server regardless of --validate. `create` doesn't need that round-trip.
-kubectl create --dry-run=client --validate=false -f "$WORKDIR/pod.yaml"
