@@ -54,6 +54,7 @@ jobs:
           done
 
   update-runner-images-src:
+    name: Update runner-images-src submodule
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

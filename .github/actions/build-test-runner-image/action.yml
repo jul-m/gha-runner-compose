@@ -1,4 +1,4 @@
-name: "Test Runner Image"
+name: "Build & Test Runner Image"
 description: "Builds, boots, waits, and cleans up a GitHub Actions runner container for a given image"
 author: "jul-m"
 
@@ -373,8 +373,8 @@ runs:
         OWN_JOB_NAME="${{ inputs.own-job-name }}"
         ALL_JOBS=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs') || exit 0
 
-        BUILDS_PENDING=$(jq --arg own "${OWN_JOB_NAME}" '[.[] | select((.name | startswith("Test Runner (") | not) and (.name != $own) and (.status == "queued" or .status == "in_progress") and (.conclusion == null))] | length' <<<"${ALL_JOBS}")
-        ORPHANED_TESTS=$(jq -r '[.[] | select((.name | startswith("Test Runner (")) and (.status == "queued" or .status == "in_progress") and (.conclusion == null)) | .name]' <<<"${ALL_JOBS}")
+        BUILDS_PENDING=$(jq --arg own "${OWN_JOB_NAME}" '[.[] | select((.name | startswith("Test ") | not) and (.name != $own) and (.status == "queued" or .status == "in_progress") and (.conclusion == null))] | length' <<<"${ALL_JOBS}")
+        ORPHANED_TESTS=$(jq -r '[.[] | select((.name | startswith("Test ")) and (.status == "queued" or .status == "in_progress") and (.conclusion == null)) | .name]' <<<"${ALL_JOBS}")
         ORPHANED_COUNT=$(jq 'length' <<<"${ORPHANED_TESTS}")
 
         if [[ "${BUILDS_PENDING}" -eq 0 && "${ORPHANED_COUNT}" -gt 0 ]]; then

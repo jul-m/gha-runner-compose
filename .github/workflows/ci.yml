@@ -37,7 +37,8 @@ jobs:
     steps:
       - name: Resolve ref to test
         id: resolve
-        run: |
+        run: |  # shell
+          # Resolve ref to test
           if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
             if git ls-remote --exit-code --heads "${{ github.server_url }}/${{ github.repository }}" update-runner-images >/dev/null 2>&1; then
               echo "should_run=true" >> "$GITHUB_OUTPUT"
@@ -54,7 +55,8 @@ jobs:
             echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v5
+      - name: Checkout code
+        uses: actions/checkout@v5
         if: steps.resolve.outputs.should_run == 'true'
         with:
           ref: ${{ steps.resolve.outputs.ref }}
@@ -62,14 +64,16 @@ jobs:
       - name: Compute content hash
         id: hash
         if: steps.resolve.outputs.should_run == 'true'
-        run: |
+        run: |  # shell
+          # Compute content hash
           HASH=$( { git rev-parse HEAD:Dockerfile; git rev-parse HEAD:docker-build; git rev-parse HEAD:docker-assets; git rev-parse HEAD:runner-images-src; } | sha256sum | cut -c1-16)
           echo "content_hash=${HASH}" >> "$GITHUB_OUTPUT"
 
       - name: Check image cache
         id: exists
         if: steps.resolve.outputs.should_run == 'true'
-        run: |
+        run: |  # shell
+          # Check image cache
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           BASE="ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging:content-${{ steps.hash.outputs.content_hash }}"
           RESULT="{}"
@@ -88,7 +92,7 @@ jobs:
           echo "category_matrix=${INCLUDE}" >> "$GITHUB_OUTPUT"
 
   build-test-base:
-    name: Build and Test Base Image (${{ matrix.arch }})
+    name: Build base - ${{ matrix.arch }}
     needs: check-target
     if: needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
     runs-on: ${{ matrix.host-runner }}
@@ -104,23 +108,24 @@ jobs:
           - arch: arm64
             host-runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout code
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.check-target.outputs.ref }}
-      - uses: ./.github/actions/test-runner-image
+      - name: Build image
+        uses: ./.github/actions/build-test-runner-image
         with:
           image-tag: gha-runner-compose-base:test-${{ matrix.arch }}
           build-target: base
           runner-suffix: base-${{ matrix.arch }}
-          cache-scope: ${{ needs.check-target.outputs.content_hash }}-${{ matrix.arch }}
-          test-job-name: Test Runner (base / ${{ matrix.arch }})
-          own-job-name: Build and Test Base Image (${{ matrix.arch }})
+          test-job-name: Test base - ${{ matrix.arch }}
+          own-job-name: Build base - ${{ matrix.arch }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: ${{ env.CONTENT_TAG }}
 
   test-base:
-    name: Test Runner (base / ${{ matrix.arch }})
+    name: Test base - ${{ matrix.arch }}
     needs: check-target
     if: needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
     runs-on: test-runner-base-${{ matrix.arch }}-${{ github.run_id }}
@@ -132,10 +137,13 @@ jobs:
           - arch: amd64
           - arch: arm64
     steps:
+      # No RUNNER_COMPONENTS at this stage (base is OS/runner prereqs only) -
+      # nothing for the per-component test system to run yet, so this stays a
+      # plain sanity check of the base image itself.
       - run: echo "Hello from self-hosted runner (base / ${{ matrix.arch }})!" && uname -a && git --version
 
   build-test-essentials:
-    name: Build and Test Essentials Image (${{ matrix.arch }})
+    name: Build essentials - ${{ matrix.arch }}
     needs: [check-target, build-test-base]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
     runs-on: ${{ matrix.host-runner }}
@@ -152,25 +160,26 @@ jobs:
           - arch: arm64
             host-runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout code
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.check-target.outputs.ref }}
-      - uses: ./.github/actions/test-runner-image
+      - name: Build image
+        uses: ./.github/actions/build-test-runner-image
         with:
           image-tag: gha-runner-compose:essentials-test-${{ matrix.arch }}
           build-target: runner-build
           runner-suffix: essentials-${{ matrix.arch }}
-          cache-scope: ${{ needs.check-target.outputs.content_hash }}-${{ matrix.arch }}
           runner-components: all-essentials
           additional-build-args: BASE_IMAGE=${{ env.BASE_CONTENT_TAG }}
-          test-job-name: Test Runner (essentials / ${{ matrix.arch }})
-          own-job-name: Build and Test Essentials Image (${{ matrix.arch }})
+          test-job-name: Test essentials - ${{ matrix.arch }}
+          own-job-name: Build essentials - ${{ matrix.arch }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: ${{ env.CONTENT_TAG }}
 
   test-essentials:
-    name: Test Runner (essentials / ${{ matrix.arch }})
+    name: Test essentials - ${{ matrix.arch }}
     needs: [check-target, build-test-base]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
     runs-on: test-runner-essentials-${{ matrix.arch }}-${{ github.run_id }}
@@ -182,10 +191,11 @@ jobs:
           - arch: amd64
           - arch: arm64
     steps:
-      - run: echo "Hello from self-hosted runner (essentials / ${{ matrix.arch }})!" && uname -a && git --version && gh --version && yq --version
+      - name: Run component tests
+        run: /imagegeneration/docker-build/local-install/run-component-tests.sh
 
   build-test-category:
-    name: Build and Test ${{ matrix.category }} Image (${{ matrix.arch }})
+    name: Build ${{ matrix.category }} - ${{ matrix.arch }}
     needs: [check-target, build-test-essentials]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
     runs-on: ${{ matrix.host-runner }}
@@ -198,25 +208,26 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.check-target.outputs.category_matrix) }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout code
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.check-target.outputs.ref }}
-      - uses: ./.github/actions/test-runner-image
+      - name: Build image
+        uses: ./.github/actions/build-test-runner-image
         with:
           image-tag: gha-runner-compose:${{ matrix.category }}-test-${{ matrix.arch }}
           build-target: runner-build
           runner-suffix: ${{ matrix.category }}-${{ matrix.arch }}
-          cache-scope: ${{ needs.check-target.outputs.content_hash }}-${{ matrix.arch }}
           runner-components: all-${{ matrix.category }}
           additional-build-args: BASE_IMAGE=${{ env.ESSENTIALS_CONTENT_TAG }}
-          test-job-name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
-          own-job-name: Build and Test ${{ matrix.category }} Image (${{ matrix.arch }})
+          test-job-name: Test ${{ matrix.category }} - ${{ matrix.arch }}
+          own-job-name: Build ${{ matrix.category }} - ${{ matrix.arch }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: ${{ env.CONTENT_TAG }}
 
   test-category:
-    name: Test Runner (${{ matrix.category }} / ${{ matrix.arch }})
+    name: Test ${{ matrix.category }} - ${{ matrix.arch }}
     needs: [check-target, build-test-essentials]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
     runs-on: test-runner-${{ matrix.category }}-${{ matrix.arch }}-${{ github.run_id }}
@@ -226,10 +237,11 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.check-target.outputs.category_matrix) }}
     steps:
-      - run: echo "Hello from self-hosted runner (${{ matrix.category }} / ${{ matrix.arch }})!" && uname -a
+      - name: Run component tests
+        run: /imagegeneration/docker-build/local-install/run-component-tests.sh
 
   trigger-large-tiers:
-    name: Trigger CI Large Tiers
+    name: Trigger large tiers
     needs:
       - check-target
       - build-test-base
@@ -253,9 +265,11 @@ jobs:
       needs.test-category.result != 'failure' && needs.test-category.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
-      - env:
+      - name: Dispatch ci-large-tiers.yml
+        env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
+        run: |  # shell
+          # Dispatch ci-large-tiers.yml
           gh workflow run ci-large-tiers.yml \
             --repo "${{ github.repository }}" \
             --ref "${{ github.event.pull_request.head.ref }}" \
