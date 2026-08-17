@@ -12,12 +12,6 @@ permissions:
   packages: write
 
 jobs:
-  # Independent of update-runner-images-src (no needs:) so a submodule-sync
-  # failure can never block cleanup, and vice versa - same isolation
-  # principle as splitting ci-large-tiers.yml out of ci.yml. Runs once daily
-  # via this workflow's own cron instead of from every ci.yml/ci-large-tiers.yml
-  # run, since staging/cache pruning doesn't need to happen more often than
-  # that and doing it from every CI run was redundant, wasted API calls.
   cleanup-ci-images:
     name: Clean up staging and cache images older than 7 days
     runs-on: ubuntu-latest
@@ -27,10 +21,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
           # gha-runner-compose-staging and gha-runner-compose-cache are both
-          # created by CI workflows using the default token, which auto-grants
-          # this repo admin rights on them - unlike gha-runner-compose(-base),
-          # which nothing but publish-release.yml ever writes to.
-          #
           # Keep for 7 days: GHCR layer deduplication (content-addressable
           # blobs) means later pushes skip re-uploading layers already present
           # in the registry, even under a different tag. A content-tag that's
