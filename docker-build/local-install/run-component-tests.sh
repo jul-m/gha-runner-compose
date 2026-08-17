@@ -36,10 +36,11 @@ test_component() {
     if [ -f "$build_script" ]; then
         local line
         line=$(grep -m1 '^invoke_tests[[:space:]]' "$build_script" || true)
-        if [ -n "$line" ]; then
-            local test_file test_name
-            test_file=$(sed -E 's/^invoke_tests[[:space:]]+"([^"]*)".*/\1/' <<<"$line")
-            test_name=$(sed -E 's/^invoke_tests[[:space:]]+"[^"]*"[[:space:]]+"([^"]*)".*/\1/' <<<"$line")
+        # invoke_tests is called with 1 or 2 quoted args across different
+        # install scripts (e.g. install-apt-common.sh passes only one) -
+        # bash's own regex captures whichever are actually there.
+        if [[ "$line" =~ ^invoke_tests[[:space:]]+\"([^\"]*)\"([[:space:]]+\"([^\"]*)\")?$ ]]; then
+            local test_file="${BASH_REMATCH[1]}" test_name="${BASH_REMATCH[3]:-}"
             ran_something=true
             if invoke_tests "$test_file" "$test_name"; then
                 log "✓ Pester test passed for '${component}' (${test_file} / ${test_name})"

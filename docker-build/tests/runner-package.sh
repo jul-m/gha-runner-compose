@@ -31,7 +31,11 @@ fi
 
 archive="${matches[0]}"
 
-if ! tar -tzf "$archive" | grep -q 'run\.sh$'; then
+# Capture the listing before grep'ing it - piping straight into `grep -q`
+# lets grep close the pipe after its first match, which under `pipefail`
+# turns tar's resulting SIGPIPE into a false failure even when run.sh is found.
+listing=$(tar -tzf "$archive")
+if ! grep -q 'run\.sh$' <<<"$listing"; then
     echo "Cached archive is corrupt or missing run.sh: $archive" >&2
     exit 1
 fi
