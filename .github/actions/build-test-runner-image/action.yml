@@ -9,6 +9,9 @@ inputs:
   build-target:
     description: "Dockerfile target stage to build"
     required: true
+  arch:
+    description: "Target architecture (amd64 or arm64) - used to key the apt/apt-lists cache-mount snapshots pulled from/pushed to GHCR"
+    required: true
   runner-suffix:
     description: "Suffix used to generate unique runner/container names"
     required: true
@@ -143,6 +146,73 @@ runs:
           echo "reused=false" >> "$GITHUB_OUTPUT"
         fi
 
+    - name: Download buildkit-cache-dance
+      if: inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
+      id: cache-dance
+      shell: bash
+      run: |  # shell
+        # Download buildkit-cache-dance - CLI mode (not the `uses:` action) so
+        # we control exactly when injection/extraction happen around the
+        # build, instead of extraction firing as an automatic post-job hook
+        # (which would run after any step we could add here to push the
+        # result to GHCR).
+        DANCE_DIR="${{ runner.temp }}/buildkit-cache-dance"
+        mkdir -p "${DANCE_DIR}"
+        curl -fsSL "https://github.com/reproducible-containers/buildkit-cache-dance/archive/refs/tags/v3.1.0.tar.gz" \
+          | tar xz --strip-components=1 -C "${DANCE_DIR}"
+        echo "dir=${DANCE_DIR}" >> "$GITHUB_OUTPUT"
+
+    - name: Pull cache-mount snapshot
+      if: inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
+      id: pull-mounts
+      shell: bash
+      run: |  # shell
+        # Pull cache-mount snapshot: apt/apt-lists/downloads caches
+        # (RUN --mount=type=cache in the Dockerfile) don't survive between
+        # separate builds on GitHub-hosted runners on their own - BuildKit
+        # cache mounts can't be exported via cache-from/cache-to at all
+        # (moby/buildkit#2370). Materialize the previous snapshot from GHCR
+        # into plain local directories instead, for buildkit-cache-dance to
+        # inject below.
+        MOUNTS_DIR="${{ runner.temp }}/cache-mounts"
+        mkdir -p "${MOUNTS_DIR}/apt-cache" "${MOUNTS_DIR}/apt-lists" "${MOUNTS_DIR}/downloads"
+        MOUNTS_REF="ghcr.io/${{ github.repository_owner }}/gha-runner-compose-cache:mounts-${{ steps.setup-context.outputs.cache_scope }}"
+
+        if docker pull "${MOUNTS_REF}" >/dev/null 2>&1; then
+          CID=$(docker create "${MOUNTS_REF}")
+          docker cp "${CID}:/apt-cache/." "${MOUNTS_DIR}/apt-cache/" 2>/dev/null || true
+          docker cp "${CID}:/apt-lists/." "${MOUNTS_DIR}/apt-lists/" 2>/dev/null || true
+          docker cp "${CID}:/downloads/." "${MOUNTS_DIR}/downloads/" 2>/dev/null || true
+          docker rm "${CID}" >/dev/null
+          echo "Restored cache-mount snapshot from ${MOUNTS_REF}"
+        else
+          echo "No existing cache-mount snapshot at ${MOUNTS_REF} - starting empty"
+        fi
+
+        MAP_FILE="${{ runner.temp }}/cache-mounts-map.json"
+        cat > "${MAP_FILE}" <<EOF
+        {
+          "${MOUNTS_DIR}/apt-cache": {"target": "/var/cache/apt", "id": "apt-cache-${{ inputs.arch }}"},
+          "${MOUNTS_DIR}/apt-lists": {"target": "/var/lib/apt/lists", "id": "apt-lists-cache-${{ inputs.arch }}"},
+          "${MOUNTS_DIR}/downloads": {"target": "/var/cache/gha-download-cache", "id": "gha-download-cache"}
+        }
+        EOF
+
+        {
+          echo "dir=${MOUNTS_DIR}"
+          echo "ref=${MOUNTS_REF}"
+          echo "map_file=${MAP_FILE}"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Inject cache mounts
+      if: inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
+      shell: bash
+      run: |  # shell
+        # Inject cache mounts
+        node "${{ steps.cache-dance.outputs.dir }}/dist/index.js" \
+          --builder "${{ steps.buildx.outputs.name }}" \
+          --cache-map "$(cat "${{ steps.pull-mounts.outputs.map_file }}")"
+
     - name: Build image
       if: inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
       uses: docker/build-push-action@v6
@@ -163,6 +233,35 @@ runs:
           ${{ inputs.additional-build-args }}
         secrets: |
           id=GITHUB_TOKEN,env=GITHUB_TOKEN
+
+    - name: Extract cache mounts
+      if: always() && inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
+      shell: bash
+      run: |  # shell
+        # Extract cache mounts: pull the post-build state back out of the
+        # builder, even on build failure - whatever got downloaded before the
+        # failure is still worth keeping for next time.
+        node "${{ steps.cache-dance.outputs.dir }}/dist/index.js" --extract \
+          --builder "${{ steps.buildx.outputs.name }}" \
+          --cache-map "$(cat "${{ steps.pull-mounts.outputs.map_file }}")"
+
+    - name: Push cache-mount snapshot
+      if: always() && inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
+      shell: bash
+      run: |  # shell
+        # Push cache-mount snapshot: repackage the 3 local directories as a
+        # scratch image and push it to GHCR for the next build to pull.
+        MOUNTS_DIR="${{ steps.pull-mounts.outputs.dir }}"
+        MOUNTS_REF="${{ steps.pull-mounts.outputs.ref }}"
+        cat > "${{ runner.temp }}/mounts.Dockerfile" <<'EOF'
+        FROM scratch
+        COPY apt-cache /apt-cache
+        COPY apt-lists /apt-lists
+        COPY downloads /downloads
+        CMD ["noop"]
+        EOF
+        docker build -f "${{ runner.temp }}/mounts.Dockerfile" -t "${MOUNTS_REF}" "${MOUNTS_DIR}"
+        docker push "${MOUNTS_REF}"
 
     - name: Pull reused content-tagged image
       if: steps.check-reuse.outputs.reused == 'true'

@@ -1,6 +1,6 @@
 #!/bin/bash
 ################################################################################
-##  File:  docker-build/tests/apt-common.sh
+##  File:  component-tests/tests/apt-common.sh
 ##  Desc:  Custom coverage for the apt-common component. Upstream's Pester
 ##         "Apt" test only checks apt.cmd_packages/apt.vital_packages, never
 ##         apt.common_packages - so this samples across that list instead.

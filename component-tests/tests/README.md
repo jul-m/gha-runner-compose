@@ -1,7 +1,7 @@
 # Custom component tests
 
 Optional per-component test scripts, run against the finished image after
-build by `docker-build/local-install/run-component-tests.sh`.
+build by `component-tests/run-component-tests.sh`.
 
 To add one, drop a `<component-name>.sh` here (matching the component name
 in `docker-build/local-install/components.csv`), e.g.:

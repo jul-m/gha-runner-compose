@@ -117,6 +117,7 @@ jobs:
         with:
           image-tag: gha-runner-compose-base:test-${{ matrix.arch }}
           build-target: base
+          arch: ${{ matrix.arch }}
           runner-suffix: base-${{ matrix.arch }}
           test-job-name: Test base - ${{ matrix.arch }}
           own-job-name: Build base - ${{ matrix.arch }}
@@ -169,6 +170,7 @@ jobs:
         with:
           image-tag: gha-runner-compose:essentials-test-${{ matrix.arch }}
           build-target: runner-build
+          arch: ${{ matrix.arch }}
           runner-suffix: essentials-${{ matrix.arch }}
           runner-components: all-essentials
           additional-build-args: BASE_IMAGE=${{ env.BASE_CONTENT_TAG }}
@@ -217,6 +219,7 @@ jobs:
         with:
           image-tag: gha-runner-compose:${{ matrix.category }}-test-${{ matrix.arch }}
           build-target: runner-build
+          arch: ${{ matrix.arch }}
           runner-suffix: ${{ matrix.category }}-${{ matrix.arch }}
           runner-components: all-${{ matrix.category }}
           additional-build-args: BASE_IMAGE=${{ env.ESSENTIALS_CONTENT_TAG }}

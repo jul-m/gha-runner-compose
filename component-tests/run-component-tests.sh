@@ -1,12 +1,15 @@
 #!/bin/bash
 ########################################################################################################################
-##  File:  docker-build/local-install/run-component-tests.sh
+##  File:  component-tests/run-component-tests.sh
 ##  Desc:  Re-test every installed component against the finished image: replay
 ##         its Pester test (docker-assets/from-upstream/build/install-<name>.sh's
 ##         trailing invoke_tests call) if still active, then its custom test
-##         script (docker-build/tests/<name>.sh) if one exists. Everything this
-##         needs is already baked into the image, so it runs standalone with no
-##         host mounts - as a GitHub Actions step on a booted runner, or via
+##         script (component-tests/tests/<name>.sh) if one exists. Both are
+##         copied into the image as their own trailing layer, after the
+##         expensive install RUN steps - so editing a test doesn't bust the
+##         cache for the actual component installation. Everything needed
+##         here is already baked in, so this runs standalone with no host
+##         mounts - as a GitHub Actions step on a booted runner, or via
 ##         `docker run --entrypoint bash <image> -c ...` from anywhere else.
 ########################################################################################################################
 

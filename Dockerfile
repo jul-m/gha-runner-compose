@@ -81,3 +81,8 @@ RUN --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cach
         bash -e "/imagegeneration/docker-build/local-install/install-components.sh" && \
     sudo bash -e "/imagegeneration/docker-build/local-install/clean-restore.sh"
 # clean-restore.sh remove temp file + restore APT config (docker-clean + remove zz-force-apt-cache.conf)
+
+# => Post-build component tests, copied last: editing a test script must never
+# bust the cache for the (expensive) component-install layer above.
+COPY --chmod=777 --chown=root:${RUNNER_USER} component-tests/tests /imagegeneration/docker-build/tests
+COPY --chmod=777 --chown=root:${RUNNER_USER} component-tests/run-component-tests.sh /imagegeneration/docker-build/local-install/run-component-tests.sh
