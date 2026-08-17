@@ -74,7 +74,9 @@ while IFS= read -r component; do
 done < "$INSTALLED_FILE"
 
 if [ ${#FAILED[@]} -gt 0 ]; then
-    fail "Component test failures: ${FAILED[*]}"
+    # helpers.sh sets IFS to newline+tab, so ${FAILED[*]} joined by the
+    # default IFS would spread one entry per line instead of a single list.
+    fail "Component test failures: $(IFS=', '; echo "${FAILED[*]}")"
 fi
 
 log "All component tests passed (or had none defined)."

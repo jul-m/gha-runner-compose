@@ -14,4 +14,9 @@ cd "$WORKDIR"
 kotlinc hello.kt -include-runtime -d hello.jar
 [ -f hello.jar ]
 [ "$(java -jar hello.jar)" == "hello from kotlin" ]
-[ "$(kotlin hello.kt)" == "hello from kotlin" ]
+
+# `kotlin` only runs .kts as a script directly - a plain .kt needs the jar above
+cat > "$WORKDIR/hello.kts" <<'EOF'
+println("hello from kotlin")
+EOF
+[ "$(kotlin hello.kts)" == "hello from kotlin" ]

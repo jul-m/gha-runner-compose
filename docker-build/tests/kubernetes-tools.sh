@@ -31,4 +31,6 @@ spec:
       command: ["sleep", "3600"]
 EOF
 
-kubectl apply --dry-run=client -f "$WORKDIR/pod.yaml"
+# --validate defaults to fetching the OpenAPI schema from a live cluster even
+# under --dry-run=client (there's no cluster reachable here) - turn it off.
+kubectl apply --dry-run=client --validate=false -f "$WORKDIR/pod.yaml"

@@ -22,6 +22,7 @@ javac HelloWorld.java
 for env_var in $(compgen -v | grep -E '^JAVA_HOME_[0-9]+_X64$'); do
     java_home_versioned="${!env_var}"
     [ -x "$java_home_versioned/bin/javac" ]
+    mkdir -p "$WORKDIR/out-$env_var"
     "$java_home_versioned/bin/javac" HelloWorld.java -d "$WORKDIR/out-$env_var"
     "$java_home_versioned/bin/java" -cp "$WORKDIR/out-$env_var" HelloWorld
 done

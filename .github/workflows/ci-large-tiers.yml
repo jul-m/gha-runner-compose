@@ -112,7 +112,7 @@ jobs:
 
   # Tier chain (amd64): medium -> large -> xlarge -> all.
   build-tier-medium-amd64:
-    name: Build medium - amd64
+    name: Build all-tier-medium - amd64
     needs: check-target
     if: needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json)['medium-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
@@ -143,7 +143,7 @@ jobs:
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-amd64
 
   build-tier-large-amd64:
-    name: Build large - amd64
+    name: Build all-tier-large - amd64
     needs: [check-target, build-tier-medium-amd64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-amd64.result != 'failure' && needs.build-tier-medium-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['large-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
@@ -174,7 +174,7 @@ jobs:
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-amd64
 
   build-tier-xlarge-amd64:
-    name: Build xlarge - amd64
+    name: Build all-tier-xlarge - amd64
     needs: [check-target, build-tier-large-amd64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-amd64.result != 'failure' && needs.build-tier-large-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['xlarge-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
@@ -239,7 +239,7 @@ jobs:
   # amd64 "all" tier (not run in parallel) so both arches never compete for
   # the same persistent self-hosted builder at once.
   build-tier-medium-arm64:
-    name: Build medium - arm64
+    name: Build all-tier-medium - arm64
     needs: [check-target, build-tier-all-amd64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-all-amd64.result != 'failure' && needs.build-tier-all-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['medium-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
@@ -270,7 +270,7 @@ jobs:
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-arm64
 
   build-tier-large-arm64:
-    name: Build large - arm64
+    name: Build all-tier-large - arm64
     needs: [check-target, build-tier-medium-arm64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-arm64.result != 'failure' && needs.build-tier-medium-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['large-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]
@@ -301,7 +301,7 @@ jobs:
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-arm64
 
   build-tier-xlarge-arm64:
-    name: Build xlarge - arm64
+    name: Build all-tier-xlarge - arm64
     needs: [check-target, build-tier-large-arm64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-arm64.result != 'failure' && needs.build-tier-large-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['xlarge-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images]

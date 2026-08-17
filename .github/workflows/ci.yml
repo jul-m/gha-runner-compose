@@ -143,7 +143,7 @@ jobs:
       - run: echo "Hello from self-hosted runner (base / ${{ matrix.arch }})!" && uname -a && git --version
 
   build-test-essentials:
-    name: Build essentials - ${{ matrix.arch }}
+    name: Build all-essentials - ${{ matrix.arch }}
     needs: [check-target, build-test-base]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
     runs-on: ${{ matrix.host-runner }}
@@ -172,14 +172,14 @@ jobs:
           runner-suffix: essentials-${{ matrix.arch }}
           runner-components: all-essentials
           additional-build-args: BASE_IMAGE=${{ env.BASE_CONTENT_TAG }}
-          test-job-name: Test essentials - ${{ matrix.arch }}
-          own-job-name: Build essentials - ${{ matrix.arch }}
+          test-job-name: Test all-essentials - ${{ matrix.arch }}
+          own-job-name: Build all-essentials - ${{ matrix.arch }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: ${{ env.CONTENT_TAG }}
 
   test-essentials:
-    name: Test essentials - ${{ matrix.arch }}
+    name: Test all-essentials - ${{ matrix.arch }}
     needs: [check-target, build-test-base]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
     runs-on: test-runner-essentials-${{ matrix.arch }}-${{ github.run_id }}
@@ -195,7 +195,7 @@ jobs:
         run: /imagegeneration/docker-build/local-install/run-component-tests.sh
 
   build-test-category:
-    name: Build ${{ matrix.category }} - ${{ matrix.arch }}
+    name: Build all-${{ matrix.category }} - ${{ matrix.arch }}
     needs: [check-target, build-test-essentials]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
     runs-on: ${{ matrix.host-runner }}
@@ -220,14 +220,14 @@ jobs:
           runner-suffix: ${{ matrix.category }}-${{ matrix.arch }}
           runner-components: all-${{ matrix.category }}
           additional-build-args: BASE_IMAGE=${{ env.ESSENTIALS_CONTENT_TAG }}
-          test-job-name: Test ${{ matrix.category }} - ${{ matrix.arch }}
-          own-job-name: Build ${{ matrix.category }} - ${{ matrix.arch }}
+          test-job-name: Test all-${{ matrix.category }} - ${{ matrix.arch }}
+          own-job-name: Build all-${{ matrix.category }} - ${{ matrix.arch }}
           github-token: ${{ secrets.ACTION_GH_TOKEN }}
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: ${{ env.CONTENT_TAG }}
 
   test-category:
-    name: Test ${{ matrix.category }} - ${{ matrix.arch }}
+    name: Test all-${{ matrix.category }} - ${{ matrix.arch }}
     needs: [check-target, build-test-essentials]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
     runs-on: test-runner-${{ matrix.category }}-${{ matrix.arch }}-${{ github.run_id }}

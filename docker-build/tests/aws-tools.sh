@@ -11,6 +11,7 @@ export AWS_SHARED_CREDENTIALS_FILE="$WORKDIR/credentials"
 # configure set/get only write/read the local profile files, no API call
 aws configure set region eu-west-1 --profile test
 aws configure set aws_access_key_id AKIDtest --profile test
+aws configure set aws_secret_access_key SECRETtest --profile test
 [ "$(aws configure get region --profile test)" == "eu-west-1" ]
 aws configure list --profile test | grep -q "eu-west-1"
 
