@@ -20,13 +20,17 @@ env:
   STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
 
 concurrency:
-  # Stable per PR / per workflow_run source branch / per ref (NOT per commit
-  # SHA, which changes every push and would never let cancel-in-progress
-  # cancel anything) - workflow_run keys on its own head_branch, not the
-  # ambient ref, so a run triggered by "Update Upstream Sources" completing
-  # never shares a group with an unrelated PR/push run that happens to share
-  # the same ref.
-  group: ci-${{ github.event.pull_request.number || github.event.workflow_run.head_branch || github.ref }}
+  # Keyed by branch NAME, not commit SHA (which changes every push and would
+  # never let cancel-in-progress cancel anything) and not PR number (a push
+  # to main also re-triggers pull_request:synchronize on the standing
+  # main->release PR - keying on PR number would put those two events for
+  # the same commit in different groups instead of deduping them). Using
+  # pull_request.head.ref for PR events and ref_name for push/dispatch means
+  # both converge on the same "main" group. workflow_run still keys on its
+  # own head_branch so a run triggered by "Update Upstream Sources"
+  # completing never shares a group with an unrelated PR/push run that
+  # happens to target the same branch.
+  group: ci-${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
