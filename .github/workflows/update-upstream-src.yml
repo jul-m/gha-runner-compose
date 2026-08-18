@@ -9,9 +9,42 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  packages: write
 
 jobs:
+  cleanup-ci-images:
+    name: Clean up staging and cache images older than 7 days
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # gha-runner-compose-staging and gha-runner-compose-cache are both
+          # Keep for 7 days: GHCR layer deduplication (content-addressable
+          # blobs) means later pushes skip re-uploading layers already present
+          # in the registry, even under a different tag. A content-tag that's
+          # still being reused gets its updated_at refreshed on every reuse
+          # (ci.yml/ci-large-tiers.yml re-push it, a cheap no-op for unchanged
+          # content), so only tags nothing has referenced in 7+ days actually
+          # get pruned here.
+          CUTOFF=$(date -u -d '7 days ago' +%s 2>/dev/null || date -u -v-7d +%s)
+          for PACKAGE in gha-runner-compose-staging gha-runner-compose-cache; do
+            VERSION_IDS=$(gh api --paginate "/user/packages/container/${PACKAGE}/versions" \
+              --jq ".[] | select((.updated_at | fromdateiso8601) < ${CUTOFF}) | .id" 2>/dev/null || true)
+            if [ -z "${VERSION_IDS}" ]; then
+              echo "No ${PACKAGE} versions older than 7 days to delete."
+              continue
+            fi
+            for ID in ${VERSION_IDS}; do
+              echo "Deleting ${PACKAGE} version ${ID} (older than 7 days)"
+              gh api --method DELETE "/user/packages/container/${PACKAGE}/versions/${ID}" 2>/dev/null \
+                || echo "  ⚠️ Failed to delete version ${ID}."
+            done
+          done
+
   update-runner-images-src:
+    name: Update runner-images-src submodule
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -52,8 +85,10 @@ jobs:
         if: steps.check_changes.outputs.changes == 'true'
         id: copy_sources
         run: |  # shell
-          # Copy Ubuntu scripts
-          cp -r runner-images-src/images/ubuntu/scripts/* docker-assets/from-upstream/
+          # Mirror Ubuntu scripts (rsync --delete prunes files removed upstream,
+          # unlike cp -r which left orphaned scripts around indefinitely)
+          rsync -a --delete --exclude=toolset.json --exclude=LICENCE \
+            runner-images-src/images/ubuntu/scripts/ docker-assets/from-upstream/
           # Copy toolset
           cp runner-images-src/images/ubuntu/toolsets/toolset-2404.json docker-assets/from-upstream/toolset.json
 

@@ -88,11 +88,27 @@ ensure_runner_installed() {
     fi
     
     log "Runner not found in $INSTALL_DIR, installing..."
-    
+
     # Try to extract from cache first, then download if not available
     if ! extract_runner_from_cache; then
         log "No cached runner found, downloading..."
-        download_and_extract_runner
+
+        local attempt
+        for attempt in 1 2 3; do
+            # Run in a subshell: download_and_extract_runner (and the upstream
+            # helpers it calls, e.g. on checksum mismatch) may call `exit`
+            # directly rather than returning an error - under `set -e` that
+            # would kill this whole script instead of just failing the
+            # attempt. GitHub's release API/CDN occasionally 504s transiently,
+            # so a bare no-cache image shouldn't die on the first blip.
+            if (download_and_extract_runner); then
+                return 0
+            fi
+            warn "Runner download attempt ${attempt}/3 failed"
+            rm -rf "${INSTALL_DIR:?}"/*
+            [ "$attempt" -lt 3 ] && sleep 5
+        done
+        fail "Failed to download and install GitHub Actions Runner after 3 attempts"
     fi
 }
 

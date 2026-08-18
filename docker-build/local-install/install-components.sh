@@ -395,6 +395,13 @@ process_component() {
 run_preinstall() {
     log "Running pre-installation steps"
 
+    # Force non-interactive behavior across upstream install scripts.
+    # UNZIPOPT avoids overwrite prompts (e.g. LICENSE.txt collisions in /usr/local/bin).
+    export DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}"
+    export NONINTERACTIVE="${NONINTERACTIVE:-1}"
+    export UNZIPOPT="-o"
+    export GIT_TERMINAL_PROMPT=0
+
     # Load packages lists for components scripts with "apt-get install"
     log "=> Preloading apt packages lists"
     apt-get update
