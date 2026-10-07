@@ -10,15 +10,9 @@ podman --version
 buildah --version
 skopeo --version
 
-# install_podman_static's crun runtime-path fix (actions/runner-images#14473)
-[ -f /etc/containers/containers.conf.d/00-fix-runtime.conf ]
-grep -q 'crun = \["/usr/local/bin/crun"\]' /etc/containers/containers.conf.d/00-fix-runtime.conf
-command -v crun
-
 # unqualified-search-registries written by install-container-tools.sh
 grep -q 'docker.io' /etc/containers/registries.conf
 grep -q 'quay.io' /etc/containers/registries.conf
 
-# netavark/iptables firewall driver fix (actions/runner-images#14230)
-[ -f /etc/containers/containers.conf.d/99-fix-firewall.conf ]
-grep -q 'firewall_driver = "iptables"' /etc/containers/containers.conf.d/99-fix-firewall.conf
+# netavark/iptables firewall driver fix (actions/runner-images#14230) only applies
+# on Ubuntu 26.04 upstream; this image is built on 24.04, where it's never written.

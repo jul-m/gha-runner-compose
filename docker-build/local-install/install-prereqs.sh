@@ -37,6 +37,10 @@ patch_upstream_helpers(){
     # Replace the whole line before the generic echo→printf patches below alter the anchor text.
     sed -i '/printf.*echo.*matching_releases.*body/c\    matched_line=$(printf '"'"'%s'"'"' "$matching_releases" | jq -r '"'"'.body'"'"' | grep "$file_name")' "$install_sh"
 
+    # Upstream queries the GitHub releases API with a single `curl -fsSL`: one transient 403/5xx fails the
+    # whole component. Retry on any error, with a pause long enough to clear secondary rate limits.
+    sed -i 's|curl -fsSL "https://api.github.com/repos/${repo}/releases|curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors "https://api.github.com/repos/${repo}/releases|' "$install_sh"
+
     # Upstream passes large JSON blobs through unquoted `echo $var | jq …`.
     # Without quotes, bash performs word-splitting and globbing on the JSON before jq sees it,
     # which silently corrupts data containing spaces, newlines, or shell metacharacters.
@@ -75,6 +79,10 @@ patch_upstream_build_scripts(){
     fi
     sed -i '/debconf-communicate/s/^/# /' "$env_sh"
     sed -i '/dpkg-reconfigure man-db/s/^/# /' "$env_sh"
+
+    # Upstream configure-apt.sh prints /etc/apt/apt-mirrors.txt, which only exists once
+    # configure-apt-sources.sh (not part of the prerequisites) has run: `cat` would abort the build.
+    sed -i '/^cat \/etc\/apt\/apt-mirrors.txt/s/^/# /' "$BUILD_SCRIPTS/configure-apt.sh"
 }
 
 # Patch install.sh on disk BEFORE sourcing so fixed functions are loaded

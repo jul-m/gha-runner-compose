@@ -21,9 +21,14 @@ ENV NONINTERACTIVE=1
 # => Copy APT config to enable caching
 COPY docker-assets/apt.conf.d /imagegeneration/docker-assets/apt.conf.d
 
+# "ci" -> use the CI mirrors (see docker-assets/apt-mirror.sh) during the build only (restored before the end of each RUN)
+ARG APT_MIRROR=""
+
 # => Enable APT caching + install base build dependencies + create runner user/directories
-RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=locked \
+RUN --mount=type=bind,source=docker-assets/apt-mirror.sh,target=/run/apt-mirror.sh \
+    --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,id=apt-lists-cache-$TARGETARCH,sharing=locked \
+    bash /run/apt-mirror.sh enable && \
     mv /etc/apt/apt.conf.d/docker-clean /imagegeneration/docker-assets/apt.conf.d/docker-clean.bak && \
     ln -s /imagegeneration/docker-assets/apt.conf.d/zz-force-apt-cache.conf /etc/apt/apt.conf.d/zz-force-apt-cache.conf && \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -32,18 +37,22 @@ RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=lo
     useradd -m -s /bin/bash ${RUNNER_USER} && \
     echo "${RUNNER_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/90-runner && chmod 440 /etc/sudoers.d/90-runner && \
     mkdir -p ${RUNNER_INSTALL_DIR} ${RUNNER_WORKDIR} && \
-    chown -R ${RUNNER_USER}:${RUNNER_USER} ${RUNNER_INSTALL_DIR} ${RUNNER_WORKDIR}
+    chown -R ${RUNNER_USER}:${RUNNER_USER} ${RUNNER_INSTALL_DIR} ${RUNNER_WORKDIR} && \
+    bash /run/apt-mirror.sh restore
 
 # => Install prerequisites + optional components
 COPY --chmod=777 --chown=root:${RUNNER_USER} docker-assets/from-upstream /imagegeneration
 COPY --chmod=777 --chown=root:${RUNNER_USER} docker-build /imagegeneration/docker-build
 
-RUN --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cache \
+RUN --mount=type=bind,source=docker-assets/apt-mirror.sh,target=/run/apt-mirror.sh \
+    --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cache \
     --mount=type=cache,target=/var/lib/apt/lists,id=apt-lists-cache-$TARGETARCH,sharing=locked \
     --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=locked \
     --mount=type=secret,id=GITHUB_TOKEN,required=false \
+    bash /run/apt-mirror.sh enable && \
     bash -e "/imagegeneration/docker-build/local-install/install-prereqs.sh" && \
-    bash -e "/imagegeneration/docker-build/local-install/clean-restore.sh"
+    bash -e "/imagegeneration/docker-build/local-install/clean-restore.sh" && \
+    bash /run/apt-mirror.sh restore
 # clean-restore.sh remove temp file + restore APT config (docker-clean + remove zz-force-apt-cache.conf)
 
 # => Entrypoint
@@ -63,7 +72,7 @@ ARG TARGETARCH
 
 # Comma separated list of runner components to install (e.g. "docker,containerd").
 # Already installed components in $BASE_IMAGE will be skipped.
-ARG RUNNER_COMPONENTS=""
+ARG COMPONENTS=""
 
 # List of additional apt packages to install (comma separated)
 ARG APT_PACKAGES=""
@@ -71,15 +80,21 @@ ARG APT_PACKAGES=""
 # List of additional PowerShell modules to install (comma separated)
 ARG PWSH_MODULES=""
 
-RUN --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cache \
+# "ci" -> use the CI mirrors (see docker-assets/apt-mirror.sh) during the build only (restored before the end of the RUN)
+ARG APT_MIRROR=""
+
+RUN --mount=type=bind,source=docker-assets/apt-mirror.sh,target=/run/apt-mirror.sh \
+    --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cache \
     --mount=type=cache,target=/var/lib/apt/lists,id=apt-lists-cache-$TARGETARCH,sharing=locked \
     --mount=type=cache,target=/var/cache/apt,id=apt-cache-$TARGETARCH,sharing=locked \
     --mount=type=secret,id=GITHUB_TOKEN,required=false \
+    sudo -E bash /run/apt-mirror.sh enable && \
     sudo mv /etc/apt/apt.conf.d/docker-clean /imagegeneration/docker-assets/apt.conf.d/docker-clean.bak && \
     sudo ln -s /imagegeneration/docker-assets/apt.conf.d/zz-force-apt-cache.conf /etc/apt/apt.conf.d/zz-force-apt-cache.conf && \
-    sudo -E RUNNER_COMPONENTS="$RUNNER_COMPONENTS" APT_PACKAGES="$APT_PACKAGES" PWSH_MODULES="$PWSH_MODULES" \
+    sudo -E COMPONENTS="$COMPONENTS" APT_PACKAGES="$APT_PACKAGES" PWSH_MODULES="$PWSH_MODULES" \
         bash -e "/imagegeneration/docker-build/local-install/install-components.sh" && \
-    sudo bash -e "/imagegeneration/docker-build/local-install/clean-restore.sh"
+    sudo bash -e "/imagegeneration/docker-build/local-install/clean-restore.sh" && \
+    sudo -E bash /run/apt-mirror.sh restore
 # clean-restore.sh remove temp file + restore APT config (docker-clean + remove zz-force-apt-cache.conf)
 
 # => Post-build component tests, copied last: editing a test script must never
