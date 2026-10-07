@@ -146,6 +146,13 @@ jobs:
           - arch: amd64
           - arch: arm64
     steps:
+      - name: Fail fast when the build job did not start the runner
+        if: startsWith(runner.name, 'rescue-')
+        run: |  # shell
+          # Fail fast: the build failed, a rescue agent picked this job up so it never stays queued
+          echo "::error::The build job failed before the test runner started."
+          exit 1
+
       # No COMPONENTS at this stage (base is OS/runner prereqs only) -
       # nothing for the per-component test system to run yet, so this stays a
       # plain sanity check of the base image itself.
@@ -203,6 +210,13 @@ jobs:
           - arch: amd64
           - arch: arm64
     steps:
+      - name: Fail fast when the build job did not start the runner
+        if: startsWith(runner.name, 'rescue-')
+        run: |  # shell
+          # Fail fast: the build failed, a rescue agent picked this job up so it never stays queued
+          echo "::error::The build job failed before the test runner started."
+          exit 1
+
       - name: Run component tests
         run: /imagegeneration/docker-build/local-install/run-component-tests.sh
 
@@ -252,6 +266,13 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.check-target.outputs.category_matrix) }}
     steps:
+      - name: Fail fast when the build job did not start the runner
+        if: startsWith(runner.name, 'rescue-')
+        run: |  # shell
+          # Fail fast: the build failed, a rescue agent picked this job up so it never stays queued
+          echo "::error::The build job failed before the test runner started."
+          exit 1
+
       - name: Run component tests
         run: /imagegeneration/docker-build/local-install/run-component-tests.sh
 

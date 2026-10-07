@@ -169,6 +169,7 @@ runs:
 
     - name: Build image
       if: inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
+      timeout-minutes: 24
       uses: docker/build-push-action@v6
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -319,39 +320,40 @@ runs:
           echo "Runner ${RUNNER_NAME} not found or already removed."
         fi
 
-    - name: Warn if dependent job is still waiting
-      if: failure() && steps.auth.outputs.mode != 'none'
+    - name: Rescue orphaned test job
+      if: (failure() || cancelled()) && steps.auth.outputs.mode != 'none' && inputs.test-job-name != ''
       shell: bash
       env:
-        GH_TOKEN: ${{ github.token }}
+        GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.admin-token }}
+        RUN_TOKEN: ${{ github.token }}
       run: |  # shell
-        # Surface whether the dependent test job is orphaned (its runner will
-        # never register since this build failed). Cleanup happens in the
-        # "Sweep orphaned dependent jobs" step below, not here.
-        TEST_JOB_NAME="${{ inputs.test-job-name }}"
-        if [[ -z "${TEST_JOB_NAME}" ]]; then
-          echo "ℹ️ No test job name provided; skipping dependent job check."
-          exit 1
+        # Rescue orphaned test job: the build failed, so the container runner the "Test" job waits for
+        # never registers. Start a bare runner agent on this host with the same label; the Test job
+        # sees its name (rescue-*) and fails at once instead of queueing for hours.
+        JOB_JSON=$(GH_TOKEN="${RUN_TOKEN}" gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+          --jq ".jobs[] | select(.name == \"${{ inputs.test-job-name }}\")") || true
+        if [[ "$(jq -r '.status // ""' <<<"${JOB_JSON}")" != "queued" ]]; then
+          echo "Test job not queued (status: $(jq -r '.status // "not found"' <<<"${JOB_JSON}")); nothing to rescue."
+          exit 0
         fi
 
-        JOB_JSON=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
-          --jq ".jobs[] | select(.name == \"${TEST_JOB_NAME}\")") || true
+        RESCUE_NAME="rescue-${RUNNER_NAME}"
+        case "$(uname -m)" in aarch64) RUNNER_ARCH=arm64 ;; *) RUNNER_ARCH=x64 ;; esac
+        VERSION=$(gh api repos/actions/runner/releases/latest --jq .tag_name)
+        DIR="${{ runner.temp }}/rescue-runner"
+        mkdir -p "${DIR}" && cd "${DIR}"
+        curl -fsSL "https://github.com/actions/runner/releases/download/${VERSION}/actions-runner-linux-${RUNNER_ARCH}-${VERSION#v}.tar.gz" | tar xz
+        REG_TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
+        ./config.sh --unattended --ephemeral --replace --no-default-labels \
+          --url "${{ github.server_url }}/${{ github.repository }}" --token "${REG_TOKEN}" \
+          --name "${RESCUE_NAME}" --labels "${RUNNER_LABEL}"
+        timeout 300 ./run.sh || echo "⚠️ Rescue runner did not pick up '${{ inputs.test-job-name }}' within 5 min."
 
-        if [[ -z "${JOB_JSON}" ]]; then
-          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' not found."
-          exit 1
+        RESCUE_ID=$(gh api "repos/${{ github.repository }}/actions/runners" \
+          --jq ".runners[] | select(.name == \"${RESCUE_NAME}\") | .id" 2>/dev/null || echo "")
+        if [[ -n "${RESCUE_ID}" ]]; then
+          gh api --method DELETE "repos/${{ github.repository }}/actions/runners/${RESCUE_ID}" >/dev/null 2>&1 || true
         fi
-
-        JOB_STATUS=$(jq -r '.status // ""' <<<"${JOB_JSON}")
-        JOB_CONCLUSION=$(jq -r '.conclusion // ""' <<<"${JOB_JSON}")
-
-        if [[ "${JOB_STATUS}" == "queued" || "${JOB_STATUS}" == "in_progress" ]] && [[ -z "${JOB_CONCLUSION}" ]]; then
-          echo "❌ Dependent job '${TEST_JOB_NAME}' still ${JOB_STATUS} and will never get a runner; it will be swept up once every build job in this run has finished."
-        else
-          echo "ℹ️ Dependent job '${TEST_JOB_NAME}' status='${JOB_STATUS}' conclusion='${JOB_CONCLUSION}'."
-        fi
-
-        exit 1
 
     - name: Sweep orphaned dependent jobs
       if: always() && steps.auth.outputs.mode != 'none'
@@ -381,5 +383,5 @@ runs:
         if [[ "${BUILDS_PENDING}" -eq 0 && "${ORPHANED_COUNT}" -gt 0 ]]; then
           echo "❌ All build jobs are done but ${ORPHANED_COUNT} test job(s) are still queued with no runner coming: $(jq -r 'join(", ")' <<<"${ORPHANED_TESTS}")."
           echo "Cancelling workflow ${GITHUB_RUN_ID} so they resolve instead of sitting queued for up to 24-48h."
-          gh run cancel "${GITHUB_RUN_ID}" || true
+          gh run cancel "${GITHUB_RUN_ID}" || gh api --method POST "repos/${{ github.repository }}/actions/runs/${GITHUB_RUN_ID}/force-cancel" || true
         fi
