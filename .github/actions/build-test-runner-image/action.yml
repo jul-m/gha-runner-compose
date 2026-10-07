@@ -169,7 +169,6 @@ runs:
 
     - name: Build image
       if: inputs.skip-build != 'true' && steps.check-reuse.outputs.reused != 'true'
-      timeout-minutes: 24
       uses: docker/build-push-action@v6
       env:
         GITHUB_TOKEN: ${{ github.token }}
