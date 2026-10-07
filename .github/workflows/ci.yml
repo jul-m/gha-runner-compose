@@ -33,8 +33,22 @@ jobs:
       ref: ${{ steps.resolve.outputs.ref }}
       content_hash: ${{ steps.hash.outputs.content_hash }}
       exists_json: ${{ steps.exists.outputs.exists_json }}
+      runner_tests: ${{ steps.mode.outputs.runner_tests }}
       category_matrix: ${{ steps.exists.outputs.category_matrix }}
     steps:
+      - name: Detect runner test auth
+        id: mode
+        env:
+          HAS_APP: ${{ secrets.GH_APP_CLIENT_ID != '' && secrets.GH_APP_KEY != '' }}
+          HAS_PAT: ${{ secrets.ACTION_GH_TOKEN != '' }}
+        run: |  # shell
+          # Detect runner test auth: tests on self-hosted runners need the App or the PAT
+          if [[ "${HAS_APP}" == "true" || "${HAS_PAT}" == "true" ]]; then
+            echo "runner_tests=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "runner_tests=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Resolve ref to test
         id: resolve
         run: |  # shell
@@ -113,14 +127,16 @@ jobs:
           runner-suffix: base-${{ matrix.arch }}
           test-job-name: Test base - ${{ matrix.arch }}
           own-job-name: Build base - ${{ matrix.arch }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.GH_APP_KEY }}
+          admin-token: ${{ secrets.ACTION_GH_TOKEN }}
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: ${{ env.CONTENT_TAG }}
 
   test-base:
     name: Test base - ${{ matrix.arch }}
     needs: check-target
-    if: needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
+    if: needs.check-target.outputs.runner_tests == 'true' && needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json).base != true
     runs-on: test-runner-base-${{ matrix.arch }}-${{ github.run_id }}
     timeout-minutes: 15
     strategy:
@@ -168,14 +184,16 @@ jobs:
           additional-build-args: BASE_IMAGE=${{ env.BASE_CONTENT_TAG }}
           test-job-name: Test all-essentials - ${{ matrix.arch }}
           own-job-name: Build all-essentials - ${{ matrix.arch }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.GH_APP_KEY }}
+          admin-token: ${{ secrets.ACTION_GH_TOKEN }}
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: ${{ env.CONTENT_TAG }}
 
   test-essentials:
     name: Test all-essentials - ${{ matrix.arch }}
     needs: [check-target, build-test-base]
-    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-test-base.result == 'success' || fromJSON(needs.check-target.outputs.exists_json).base == true) && fromJSON(needs.check-target.outputs.exists_json).essentials != true
+    if: always() && needs.check-target.outputs.runner_tests == 'true' && needs.check-target.outputs.should_run == 'true' && (needs.build-test-base.result == 'success' || fromJSON(needs.check-target.outputs.exists_json).base == true) && fromJSON(needs.check-target.outputs.exists_json).essentials != true
     runs-on: test-runner-essentials-${{ matrix.arch }}-${{ github.run_id }}
     timeout-minutes: 15
     strategy:
@@ -217,14 +235,16 @@ jobs:
           additional-build-args: BASE_IMAGE=${{ env.ESSENTIALS_CONTENT_TAG }}
           test-job-name: Test all-${{ matrix.category }} - ${{ matrix.arch }}
           own-job-name: Build all-${{ matrix.category }} - ${{ matrix.arch }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          app-client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          app-private-key: ${{ secrets.GH_APP_KEY }}
+          admin-token: ${{ secrets.ACTION_GH_TOKEN }}
           content-tag: ${{ env.CONTENT_TAG }}
           push-image-refs: ${{ env.CONTENT_TAG }}
 
   test-category:
     name: Test all-${{ matrix.category }} - ${{ matrix.arch }}
     needs: [check-target, build-test-essentials]
-    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-test-essentials.result == 'success' || fromJSON(needs.check-target.outputs.exists_json).essentials == true) && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
+    if: always() && needs.check-target.outputs.runner_tests == 'true' && needs.check-target.outputs.should_run == 'true' && (needs.build-test-essentials.result == 'success' || fromJSON(needs.check-target.outputs.exists_json).essentials == true) && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
     runs-on: test-runner-${{ matrix.category }}-${{ matrix.arch }}-${{ github.run_id }}
     timeout-minutes: 15
     strategy:

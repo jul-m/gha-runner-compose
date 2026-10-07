@@ -31,16 +31,20 @@ inputs:
     description: "Optional extra runner labels (comma-separated) appended to the dynamic label"
     required: false
     default: ""
-  github-token:
-    description: "PAT with administration:write, only for runner registration/removal (GITHUB_TOKEN cannot); job status checks and run cancel use the workflow token"
+  app-client-id:
+    description: "GitHub App client ID (mode 1: App token, preferred). The App needs repository Administration: write"
+    required: false
+    default: ""
+  app-private-key:
+    description: "GitHub App private key (mode 1)"
+    required: false
+    default: ""
+  admin-token:
+    description: "PAT with administration:write (mode 2, used when no App credentials are given). With neither, the self-hosted runner test is skipped with a warning"
     required: false
     default: ""
   skip-build:
     description: "Set to 'true' to skip docker build (expects image to be pre-loaded)"
-    required: false
-    default: "false"
-  skip-runner:
-    description: "Set to 'true' to skip runner start/wait/cleanup steps"
     required: false
     default: "false"
   push-image-refs:
@@ -119,6 +123,33 @@ runs:
         username: ${{ github.actor }}
         password: ${{ github.token }}
 
+    - name: Resolve runner admin auth
+      id: auth
+      shell: bash
+      env:
+        APP_CLIENT_ID: ${{ inputs.app-client-id }}
+        APP_PRIVATE_KEY: ${{ inputs.app-private-key }}
+        ADMIN_TOKEN: ${{ inputs.admin-token }}
+      run: |  # shell
+        # Resolve runner admin auth: GitHub App, else PAT, else no runner test
+        if [[ -n "${APP_CLIENT_ID}" && -n "${APP_PRIVATE_KEY}" ]]; then
+          echo "mode=app" >> "$GITHUB_OUTPUT"
+        elif [[ -n "${ADMIN_TOKEN}" ]]; then
+          echo "mode=pat" >> "$GITHUB_OUTPUT"
+        else
+          echo "mode=none" >> "$GITHUB_OUTPUT"
+          echo "::warning title=Runner test skipped::No GH_APP_CLIENT_ID/GH_APP_KEY nor ACTION_GH_TOKEN secret: the image is built but not tested on a self-hosted runner."
+        fi
+
+    - name: Create GitHub App token
+      id: app-token
+      if: steps.auth.outputs.mode == 'app'
+      uses: actions/create-github-app-token@v3
+      with:
+        client-id: ${{ inputs.app-client-id }}
+        private-key: ${{ inputs.app-private-key }}
+        permission-administration: write
+
     - name: Check for reusable content-tagged image
       if: inputs.content-tag != ''
       id: check-reuse
@@ -169,17 +200,12 @@ runs:
         docker image inspect "${IMAGE_TAG}" --format='{{json .}}' | jq '.RepoTags, .Size'
 
     - name: Start runner container
-      if: inputs.skip-runner != 'true'
+      if: steps.auth.outputs.mode != 'none'
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
+        GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.admin-token }}
       run: |  # shell
         # Start runner container
-        if [[ -z "${GH_TOKEN}" ]]; then
-          echo "❌ 'github-token' input is required when skip-runner is false."
-          exit 1
-        fi
-
         TOKEN=$(gh api --method POST "repos/${{ github.repository }}/actions/runners/registration-token" --jq .token)
         docker run -d --name "${CONTAINER_NAME}" \
           -e RUNNER_REPO_URL="${{ github.server_url }}/${{ github.repository }}" \
@@ -189,7 +215,7 @@ runs:
           "${IMAGE_TAG}"
 
     - name: Wait for runner registration and execution
-      if: inputs.skip-runner != 'true'
+      if: steps.auth.outputs.mode != 'none'
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -197,7 +223,7 @@ runs:
         # Wait for runner registration and execution
         TEST_JOB_NAME="${{ inputs.test-job-name }}"
         if [[ -z "${TEST_JOB_NAME}" ]]; then
-          echo "❌ 'test-job-name' input is required when skip-runner is false."
+          echo "❌ 'test-job-name' input is required when the runner test is enabled."
           exit 1
         fi
 
@@ -269,10 +295,10 @@ runs:
         done <<< "${{ inputs.push-image-refs }}"
 
     - name: Cleanup runner
-      if: always() && inputs.skip-runner != 'true'
+      if: always() && steps.auth.outputs.mode != 'none'
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
+        GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.admin-token }}
       run: |  # shell
         # Cleanup runner
         docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
@@ -294,7 +320,7 @@ runs:
         fi
 
     - name: Warn if dependent job is still waiting
-      if: failure() && inputs.skip-runner != 'true'
+      if: failure() && steps.auth.outputs.mode != 'none'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -328,7 +354,7 @@ runs:
         exit 1
 
     - name: Sweep orphaned dependent jobs
-      if: always() && inputs.skip-runner != 'true'
+      if: always() && steps.auth.outputs.mode != 'none'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}

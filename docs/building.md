@@ -267,3 +267,11 @@ If you work with the `runner-images-src/` submodule, enable auto-update on pull/
 ```bash
 git config submodule.recurse true
 ```
+
+## CI: runner test authentication
+
+CI registers a temporary self-hosted runner per built image to run the component tests. Registering a runner needs the repository `Administration: write` permission, which `GITHUB_TOKEN` does not have. The mode is picked from the repository secrets:
+
+1. `GH_APP_CLIENT_ID` + `GH_APP_KEY`: a short-lived token is minted from a GitHub App (installed on the repository, `Administration: write`).
+2. Otherwise `ACTION_GH_TOKEN`: a PAT with `Administration: write`, used as is.
+3. Otherwise the runner test jobs are skipped with a warning; images are still built and pushed to staging, untested.
