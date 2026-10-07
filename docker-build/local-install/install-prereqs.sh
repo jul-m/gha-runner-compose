@@ -37,6 +37,10 @@ patch_upstream_helpers(){
     # Replace the whole line before the generic echo→printf patches below alter the anchor text.
     sed -i '/printf.*echo.*matching_releases.*body/c\    matched_line=$(printf '"'"'%s'"'"' "$matching_releases" | jq -r '"'"'.body'"'"' | grep "$file_name")' "$install_sh"
 
+    # Upstream queries the GitHub releases API with a single `curl -fsSL`: one transient 403/5xx fails the
+    # whole component. Retry on any error, with a pause long enough to clear secondary rate limits.
+    sed -i 's|curl -fsSL "https://api.github.com/repos/${repo}/releases|curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors "https://api.github.com/repos/${repo}/releases|' "$install_sh"
+
     # Upstream passes large JSON blobs through unquoted `echo $var | jq …`.
     # Without quotes, bash performs word-splitting and globbing on the JSON before jq sees it,
     # which silently corrupts data containing spaces, newlines, or shell metacharacters.
