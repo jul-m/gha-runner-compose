@@ -1,0 +1,49 @@
+name: Probe APT mirrors
+run-name: "Probe APT mirrors - ${{ github.event_name }} - #${{ github.run_number }}"
+
+on:
+  pull_request:
+    paths: [".github/workflows/probe-mirrors.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe ${{ matrix.arch }}
+    runs-on: ${{ matrix.host-runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            host-runner: ubuntu-24.04
+            mirrors: >-
+              http://azure.archive.ubuntu.com/ubuntu
+              http://archive.ubuntu.com/ubuntu
+              http://us.archive.ubuntu.com/ubuntu
+              https://mirrors.edge.kernel.org/ubuntu
+              http://ftp.osuosl.org/pub/ubuntu
+          - arch: arm64
+            host-runner: ubuntu-24.04-arm
+            mirrors: >-
+              http://azure.ports.ubuntu.com/ubuntu-ports
+              http://ports.ubuntu.com/ubuntu-ports
+              https://mirrors.edge.kernel.org/ubuntu-ports
+    steps:
+      - name: Probe mirrors
+        run: |  # shell
+          # Probe mirrors: 15 sequential requests (one new connection each, like apt) per mirror
+          for MIRROR in ${{ matrix.mirrors }}; do
+            echo "== ${MIRROR}"
+            SLOW=0; FAIL=0
+            for i in $(seq 1 15); do
+              OUT=$(curl -sS -o /dev/null -m 40 -w 'connect=%{time_connect} total=%{time_total} ip=%{remote_ip} code=%{http_code}' "${MIRROR}/dists/noble/InRelease" 2>&1) || FAIL=$((FAIL+1))
+              echo "${OUT}"
+              TOTAL=$(sed -n 's/.*total=\([0-9.]*\).*/\1/p' <<<"${OUT}")
+              if [[ -n "${TOTAL}" ]] && awk "BEGIN{exit !(${TOTAL} > 5)}"; then SLOW=$((SLOW+1)); fi
+            done
+            echo "SUMMARY ${MIRROR}: slow(>5s)=${SLOW}/15 failed=${FAIL}/15"
+          done
