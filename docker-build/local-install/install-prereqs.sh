@@ -140,6 +140,8 @@ run_prerequisites_scripts(){
     sed -i 's/^\(.*\/etc\/hosts.*\)$/# \1/g' "$BUILD_SCRIPTS/configure-environment.sh"
     sed -i 's/^\(.*sysctl.*\)$/# \1/g' "$BUILD_SCRIPTS/configure-environment.sh"
     sed -i 's/^\(.*motd-news.*\)$/# \1/g' "$BUILD_SCRIPTS/configure-environment.sh"
+    # Upstream's VM-only root filesystem tuning (ext4 check, GRUB rootflags, update-grub) cannot work on a container's overlay root
+    sed -i '/^root_fs_type=/,/^update-grub$/s/^/# /' "$BUILD_SCRIPTS/configure-environment.sh"
 
     for script in "${PREREQUISITES_SCRIPTS[@]}"; do
         if [ -f "$script" ]; then
