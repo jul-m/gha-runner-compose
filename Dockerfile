@@ -21,7 +21,7 @@ ENV NONINTERACTIVE=1
 # => Copy APT config to enable caching
 COPY docker-assets/apt.conf.d /imagegeneration/docker-assets/apt.conf.d
 
-# "azure" -> use the Azure Ubuntu mirrors during the build only (restored before the end of each RUN)
+# "ci" -> use the CI mirrors (see docker-assets/apt-mirror.sh) during the build only (restored before the end of each RUN)
 ARG APT_MIRROR=""
 
 # => Enable APT caching + install base build dependencies + create runner user/directories
@@ -80,7 +80,7 @@ ARG APT_PACKAGES=""
 # List of additional PowerShell modules to install (comma separated)
 ARG PWSH_MODULES=""
 
-# "azure" -> use the Azure Ubuntu mirrors during the build only (restored before the end of the RUN)
+# "ci" -> use the CI mirrors (see docker-assets/apt-mirror.sh) during the build only (restored before the end of the RUN)
 ARG APT_MIRROR=""
 
 RUN --mount=type=bind,source=docker-assets/apt-mirror.sh,target=/run/apt-mirror.sh \

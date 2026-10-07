@@ -278,4 +278,4 @@ CI registers a temporary self-hosted runner per built image to run the component
 
 ## Build argument `APT_MIRROR`
 
-`--build-arg APT_MIRROR=azure` makes the build use the Azure Ubuntu mirrors (`azure.archive.ubuntu.com`, `azure.ports.ubuntu.com`), much faster from GitHub-hosted runners. The APT sources are rewritten at the start of each `RUN` and restored at its end, so the final image keeps the default Ubuntu sources. CI sets it; leave it unset for local builds.
+`--build-arg APT_MIRROR=ci` points APT at mirrors that answer reliably from GitHub-hosted runners, where `archive.ubuntu.com` often times out: `mirrors.edge.kernel.org` on amd64, `azure.ports.ubuntu.com` on arm64. The APT sources are rewritten at the start of each `RUN` and restored at its end, so the final image keeps the default Ubuntu sources. CI sets it; leave it unset for local builds.
