@@ -63,7 +63,7 @@ ARG TARGETARCH
 
 # Comma separated list of runner components to install (e.g. "docker,containerd").
 # Already installed components in $BASE_IMAGE will be skipped.
-ARG RUNNER_COMPONENTS=""
+ARG COMPONENTS=""
 
 # List of additional apt packages to install (comma separated)
 ARG APT_PACKAGES=""
@@ -77,7 +77,7 @@ RUN --mount=type=cache,target=/var/cache/gha-download-cache,id=gha-download-cach
     --mount=type=secret,id=GITHUB_TOKEN,required=false \
     sudo mv /etc/apt/apt.conf.d/docker-clean /imagegeneration/docker-assets/apt.conf.d/docker-clean.bak && \
     sudo ln -s /imagegeneration/docker-assets/apt.conf.d/zz-force-apt-cache.conf /etc/apt/apt.conf.d/zz-force-apt-cache.conf && \
-    sudo -E RUNNER_COMPONENTS="$RUNNER_COMPONENTS" APT_PACKAGES="$APT_PACKAGES" PWSH_MODULES="$PWSH_MODULES" \
+    sudo -E COMPONENTS="$COMPONENTS" APT_PACKAGES="$APT_PACKAGES" PWSH_MODULES="$PWSH_MODULES" \
         bash -e "/imagegeneration/docker-build/local-install/install-components.sh" && \
     sudo bash -e "/imagegeneration/docker-build/local-install/clean-restore.sh"
 # clean-restore.sh remove temp file + restore APT config (docker-clean + remove zz-force-apt-cache.conf)

@@ -1,7 +1,7 @@
 # Available Components
 ## Components List
 
-This document lists the components that can be enabled in the Docker image via the `RUNNER_COMPONENTS` build argument, along with their compatibility and integration status.
+This document lists the components that can be enabled in the Docker image via the `COMPONENTS` build argument, along with their compatibility and integration status.
 
 | <ins>Component Name</ins> | <ins>Override</ins> | <ins>Categories</ins> | <ins>Content</ins> | <ins>Prebuilt Image</ins> | <ins>x86_64</ins> | <ins>ARM64</ins> | <ins>Notes</ins> |
 | --- | --- | --- | --- | --- | :---: | :---: | --- |
@@ -80,12 +80,12 @@ This document lists the components that can be enabled in the Docker image via t
 
 
 **Legend**:
-- **Component Name**: The name to use in the `RUNNER_COMPONENTS` build argument to enable the component.
+- **Component Name**: The name to use in the `COMPONENTS` build argument to enable the component.
 - **Override**: Indicates if a local override script (from `docker-build/components/`) is used to adapt the installation for Docker or the ARM64 architecture.
   - `No`: No override script is used. The upstream script is executed as-is.
   - `ARM64`: The override script adapts the installation for the ARM64 architecture.
   - `Docker`: The override script adapts the installation for a containerized environment.
-  - `Skip install`: The component is already installed during the prerequisites phase (`prereqs`) and is skipped if specified `RUNNER_COMPONENTS`.
+  - `Skip install`: The component is already installed during the prerequisites phase (`prereqs`) and is skipped if specified `COMPONENTS`.
   - `Project-maintained`: No equivalent script exists upstream; the local script is the sole implementation rather than an override of an upstream file.
 - **Categories**: Functional categorie(s) associated with the component. This allows for grouped installations (e.g., `all-cloud`). See the [Categories List](#categories-list) for more details.
 - **Prebuilt Image**: Specifies the smallest prebuilt image that includes this component. The `+` indicates that larger images also include it. The size order is: `base` < `essentials` < `medium` < `large` < `xlarge` < `all`. Category names (e.g., `cloud`) denote availability in thematic images in addition. See [docs/images.md](./images.md) for more information.
@@ -120,7 +120,7 @@ List of categories and their associated components (sorted alphabetically) :
 - **web**: `apache`, `nginx`
 
 > [!TIP]
-> Add `all-<category>` to `RUNNER_COMPONENTS` to install all components in that category.
+> Add `all-<category>` to `COMPONENTS` to install all components in that category.
 For example, `all-java` will install `java-tools`, `kotlin`, `leiningen` and `sbt`.
 
 

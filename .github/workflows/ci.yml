@@ -7,9 +7,6 @@ on:
     types: [synchronize, opened, reopened, edited]
   push:
     branches: [main]
-  workflow_run:
-    workflows: ["Update Upstream Sources"]
-    types: [completed]
 
 permissions:
   contents: read
@@ -20,24 +17,17 @@ env:
   STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
 
 concurrency:
-  # Keyed by branch NAME, not commit SHA (which changes every push and would
-  # never let cancel-in-progress cancel anything) and not PR number (a push
-  # to main also re-triggers pull_request:synchronize on the standing
-  # main->release PR - keying on PR number would put those two events for
-  # the same commit in different groups instead of deduping them). Using
-  # pull_request.head.ref for PR events and ref_name for push/dispatch means
-  # both converge on the same "main" group. workflow_run still keys on its
-  # own head_branch so a run triggered by "Update Upstream Sources"
-  # completing never shares a group with an unrelated PR/push run that
-  # happens to target the same branch.
-  group: ci-${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch || github.ref_name }}
+  # Keyed by branch NAME, not SHA (changes every push, so cancel-in-progress would never match) nor
+  # PR number (a push to main also fires pull_request:synchronize on the standing main->release PR:
+  # both events must land in the same "main" group to be deduped). Dispatch runs for the bot's
+  # update-runner-images branch share the group of that branch's pull_request run.
+  group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   check-target:
     name: Resolve target ref
     runs-on: ubuntu-latest
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     outputs:
       should_run: ${{ steps.resolve.outputs.should_run }}
       ref: ${{ steps.resolve.outputs.ref }}
@@ -49,15 +39,7 @@ jobs:
         id: resolve
         run: |  # shell
           # Resolve ref to test
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            if git ls-remote --exit-code --heads "${{ github.server_url }}/${{ github.repository }}" update-runner-images >/dev/null 2>&1; then
-              echo "should_run=true" >> "$GITHUB_OUTPUT"
-              echo "ref=update-runner-images" >> "$GITHUB_OUTPUT"
-            else
-              echo "should_run=false" >> "$GITHUB_OUTPUT"
-              echo "ref=" >> "$GITHUB_OUTPUT"
-            fi
-          elif [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             echo "ref=" >> "$GITHUB_OUTPUT"
           else
@@ -148,7 +130,7 @@ jobs:
           - arch: amd64
           - arch: arm64
     steps:
-      # No RUNNER_COMPONENTS at this stage (base is OS/runner prereqs only) -
+      # No COMPONENTS at this stage (base is OS/runner prereqs only) -
       # nothing for the per-component test system to run yet, so this stays a
       # plain sanity check of the base image itself.
       - run: echo "Hello from self-hosted runner (base / ${{ matrix.arch }})!" && uname -a && git --version
@@ -156,7 +138,7 @@ jobs:
   build-test-essentials:
     name: Build all-essentials - ${{ matrix.arch }}
     needs: [check-target, build-test-base]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-test-base.result == 'success' || fromJSON(needs.check-target.outputs.exists_json).base == true) && fromJSON(needs.check-target.outputs.exists_json).essentials != true
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
     env:
@@ -182,7 +164,7 @@ jobs:
           build-target: runner-build
           arch: ${{ matrix.arch }}
           runner-suffix: essentials-${{ matrix.arch }}
-          runner-components: all-essentials
+          components: all-essentials
           additional-build-args: BASE_IMAGE=${{ env.BASE_CONTENT_TAG }}
           test-job-name: Test all-essentials - ${{ matrix.arch }}
           own-job-name: Build all-essentials - ${{ matrix.arch }}
@@ -193,7 +175,7 @@ jobs:
   test-essentials:
     name: Test all-essentials - ${{ matrix.arch }}
     needs: [check-target, build-test-base]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-base.result != 'failure' && needs.build-test-base.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json).essentials != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-test-base.result == 'success' || fromJSON(needs.check-target.outputs.exists_json).base == true) && fromJSON(needs.check-target.outputs.exists_json).essentials != true
     runs-on: test-runner-essentials-${{ matrix.arch }}-${{ github.run_id }}
     timeout-minutes: 15
     strategy:
@@ -209,7 +191,7 @@ jobs:
   build-test-category:
     name: Build all-${{ matrix.category }} - ${{ matrix.arch }}
     needs: [check-target, build-test-essentials]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-test-essentials.result == 'success' || fromJSON(needs.check-target.outputs.exists_json).essentials == true) && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
     runs-on: ${{ matrix.host-runner }}
     timeout-minutes: 30
     env:
@@ -231,7 +213,7 @@ jobs:
           build-target: runner-build
           arch: ${{ matrix.arch }}
           runner-suffix: ${{ matrix.category }}-${{ matrix.arch }}
-          runner-components: all-${{ matrix.category }}
+          components: all-${{ matrix.category }}
           additional-build-args: BASE_IMAGE=${{ env.ESSENTIALS_CONTENT_TAG }}
           test-job-name: Test all-${{ matrix.category }} - ${{ matrix.arch }}
           own-job-name: Build all-${{ matrix.category }} - ${{ matrix.arch }}
@@ -242,7 +224,7 @@ jobs:
   test-category:
     name: Test all-${{ matrix.category }} - ${{ matrix.arch }}
     needs: [check-target, build-test-essentials]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-test-essentials.result != 'failure' && needs.build-test-essentials.result != 'cancelled' && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-test-essentials.result == 'success' || fromJSON(needs.check-target.outputs.exists_json).essentials == true) && fromJSON(needs.check-target.outputs.category_matrix)[0] != null
     runs-on: test-runner-${{ matrix.category }}-${{ matrix.arch }}-${{ github.run_id }}
     timeout-minutes: 15
     strategy:

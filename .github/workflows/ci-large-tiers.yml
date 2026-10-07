@@ -25,7 +25,6 @@ permissions:
 env:
   CI_RUN_TAG: ci-${{ github.run_id }}
   STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
-  REGISTRY: ghcr.io/${{ github.repository_owner }}
 
 concurrency:
   group: ci-large-tiers-${{ github.ref }}
@@ -134,12 +133,11 @@ jobs:
           tier: medium
           arch: amd64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-build-amd64
-          runner-components: all-tier-medium
+          components: all-tier-medium
           smoke-test-cmd: uname -a && command -v aws && command -v java && command -v python3
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
-          registry: ${{ env.REGISTRY }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-amd64
 
   build-tier-large-amd64:
@@ -165,12 +163,11 @@ jobs:
           tier: large
           arch: amd64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-amd64
-          runner-components: all-tier-large
+          components: all-tier-large
           smoke-test-cmd: uname -a && command -v dotnet && command -v ruby
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
-          registry: ${{ env.REGISTRY }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-amd64
 
   build-tier-xlarge-amd64:
@@ -196,12 +193,11 @@ jobs:
           tier: xlarge
           arch: amd64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-amd64
-          runner-components: all-tier-xlarge
+          components: all-tier-xlarge
           smoke-test-cmd: uname -a && command -v firefox
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
-          registry: ${{ env.REGISTRY }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-amd64
 
   build-tier-all-amd64:
@@ -227,12 +223,11 @@ jobs:
           tier: all
           arch: amd64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-amd64
-          runner-components: all
+          components: all
           smoke-test-cmd: uname -a
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
-          registry: ${{ env.REGISTRY }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-all-amd64
 
   # Tier chain (arm64): medium -> large -> xlarge -> all. Chained after the
@@ -261,12 +256,11 @@ jobs:
           tier: medium
           arch: arm64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-build-arm64
-          runner-components: all-tier-medium
+          components: all-tier-medium
           smoke-test-cmd: uname -a && command -v aws && command -v java && command -v python3
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
-          registry: ${{ env.REGISTRY }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-arm64
 
   build-tier-large-arm64:
@@ -292,12 +286,11 @@ jobs:
           tier: large
           arch: arm64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-medium-arm64
-          runner-components: all-tier-large
+          components: all-tier-large
           smoke-test-cmd: uname -a && command -v dotnet && command -v ruby
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
-          registry: ${{ env.REGISTRY }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-arm64
 
   build-tier-xlarge-arm64:
@@ -323,12 +316,11 @@ jobs:
           tier: xlarge
           arch: arm64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-large-arm64
-          runner-components: all-tier-xlarge
+          components: all-tier-xlarge
           smoke-test-cmd: uname -a && command -v firefox
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
-          registry: ${{ env.REGISTRY }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-arm64
 
   build-tier-all-arm64:
@@ -354,10 +346,9 @@ jobs:
           tier: all
           arch: arm64
           base-image: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-xlarge-arm64
-          runner-components: all
+          components: all
           smoke-test-cmd: uname -a
           staging-img: ${{ env.STAGING_IMG }}
           ci-run-tag: ${{ env.CI_RUN_TAG }}
-          registry: ${{ env.REGISTRY }}
-          github-token: ${{ secrets.ACTION_GH_TOKEN }}
+          github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-all-arm64

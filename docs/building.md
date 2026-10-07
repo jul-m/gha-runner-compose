@@ -37,7 +37,7 @@ To optimize multiple builds, create a dedicated BuildKit builder that leverages 
 2.  **Build with this builder:**
     ```bash
     docker buildx build \
-        --build-arg RUNNER_COMPONENTS=java-tools,yq,docker \
+        --build-arg COMPONENTS=java-tools,yq,docker \
         --target runner-build --progress=plain \
         --builder gha-runner-compose-builder --load \
         -t my-gha-runner:latest .
@@ -70,13 +70,13 @@ Some upstream scripts download assets from GitHub (releases, raw files, API meta
     # Option A: from environment
     docker buildx build \
         --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
-        --build-arg RUNNER_COMPONENTS=yq,docker,java-tools \
+        --build-arg COMPONENTS=yq,docker,java-tools \
         --target runner-build -t my-runner:latest .
 
     # Option B: from file
     docker buildx build \
         --secret id=GITHUB_TOKEN,src=$HOME/.config/github-token \
-        --build-arg RUNNER_COMPONENTS=yq,docker,java-tools \
+        --build-arg COMPONENTS=yq,docker,java-tools \
         --target runner-build -t my-runner:latest .
     ```
 
@@ -108,7 +108,7 @@ To build for both AMD64 and ARM64 simultaneously, use the `--platform` flag. Thi
 ```bash
 docker buildx build \
     --platform linux/amd64,linux/arm64 \
-    --build-arg RUNNER_COMPONENTS=java-tools,yq,docker \
+    --build-arg COMPONENTS=java-tools,yq,docker \
     --target runner-build \
     -t my-gha-runner:latest .
 ```
@@ -145,7 +145,7 @@ docker buildx build \
 ```bash
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${BASE_IMAGE_NAME}-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-essentials \
+    --build-arg COMPONENTS=all-essentials \
     -t "${RUNNER_IMAGE_NAME}-essentials-${TAG_SUFFIX}" .
 ```
 
@@ -157,43 +157,43 @@ Each category image is built on top of `essentials`:
 # Node.js
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-essentials-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-nodejs \
+    --build-arg COMPONENTS=all-nodejs \
     -t "${RUNNER_IMAGE_NAME}-nodejs-${TAG_SUFFIX}" .
 
 # Cloud
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-essentials-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-cloud \
+    --build-arg COMPONENTS=all-cloud \
     -t "${RUNNER_IMAGE_NAME}-cloud-${TAG_SUFFIX}" .
 
 # Java
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-essentials-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-java \
+    --build-arg COMPONENTS=all-java \
     -t "${RUNNER_IMAGE_NAME}-java-${TAG_SUFFIX}" .
 
 # Container
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-essentials-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-container \
+    --build-arg COMPONENTS=all-container \
     -t "${RUNNER_IMAGE_NAME}-container-${TAG_SUFFIX}" .
 
 # Python
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-essentials-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-python \
+    --build-arg COMPONENTS=all-python \
     -t "${RUNNER_IMAGE_NAME}-python-${TAG_SUFFIX}" .
 
 # .NET
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-essentials-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-dotnet \
+    --build-arg COMPONENTS=all-dotnet \
     -t "${RUNNER_IMAGE_NAME}-dotnet-${TAG_SUFFIX}" .
 
 # Build Tools
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-essentials-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-build \
+    --build-arg COMPONENTS=all-build \
     -t "${RUNNER_IMAGE_NAME}-build-${TAG_SUFFIX}" .
 ```
 
@@ -207,25 +207,25 @@ Aggregate images are built incrementally, each layer adding components on top of
 # Medium (based on build)
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-build-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-cloud,all-nodejs,all-java,all-container,all-python,all-rust \
+    --build-arg COMPONENTS=all-cloud,all-nodejs,all-java,all-container,all-python,all-rust \
     -t "${RUNNER_IMAGE_NAME}-medium-${TAG_SUFFIX}" .
 
 # Large (based on medium)
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-medium-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases \
+    --build-arg COMPONENTS=all-dotnet,all-php,all-ruby,all-r,all-julia,pipx-packages,all-web,all-databases \
     -t "${RUNNER_IMAGE_NAME}-large-${TAG_SUFFIX}" .
 
 # X-Large (based on large)
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-large-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all-swift,actions-cache,codeql-bundle,firefox,selenium \
+    --build-arg COMPONENTS=all-swift,actions-cache,codeql-bundle,firefox,selenium \
     -t "${RUNNER_IMAGE_NAME}-xlarge-${TAG_SUFFIX}" .
 
 # All (based on xlarge)
 docker buildx build --target runner-build \
     --build-arg BASE_IMAGE="${RUNNER_IMAGE_NAME}-xlarge-${TAG_SUFFIX}" \
-    --build-arg RUNNER_COMPONENTS=all \
+    --build-arg COMPONENTS=all \
     -t "${RUNNER_IMAGE_NAME}-all-${TAG_SUFFIX}" .
 ```
 

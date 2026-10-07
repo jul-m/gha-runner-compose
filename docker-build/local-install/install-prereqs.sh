@@ -75,6 +75,10 @@ patch_upstream_build_scripts(){
     fi
     sed -i '/debconf-communicate/s/^/# /' "$env_sh"
     sed -i '/dpkg-reconfigure man-db/s/^/# /' "$env_sh"
+
+    # Upstream configure-apt.sh prints /etc/apt/apt-mirrors.txt, which only exists once
+    # configure-apt-sources.sh (not part of the prerequisites) has run: `cat` would abort the build.
+    sed -i '/^cat \/etc\/apt\/apt-mirrors.txt/s/^/# /' "$BUILD_SCRIPTS/configure-apt.sh"
 }
 
 # Patch install.sh on disk BEFORE sourcing so fixed functions are loaded

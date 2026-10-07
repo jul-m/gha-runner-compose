@@ -35,8 +35,8 @@ declare -A INSTALLED_COMPONENTS=()
 declare -A INSTALLED_APT_PACKAGES=()
 declare -A INSTALLED_PWSH_MODULES=()
 
-# Split RUNNER_COMPONENTS build env var values into array
-IFS=',' read -ra components <<< "${RUNNER_COMPONENTS:-}"
+# Split COMPONENTS build env var values into array
+IFS=',' read -ra components <<< "${COMPONENTS:-}"
 
 
 # ===== FUNCTIONS ===== #
@@ -227,7 +227,7 @@ expand_components() {
         if [ "$item" == "all" ]; then
             # Check if 'all' is alone
             if [ ${#components[@]} -gt 1 ]; then
-                fail "'all' can only be used alone in RUNNER_COMPONENTS"
+                fail "'all' can only be used alone in COMPONENTS"
             fi
         elif [[ "$item" == all-* ]]; then
             # Check if category exists

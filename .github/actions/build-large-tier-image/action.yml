@@ -4,7 +4,7 @@ author: "jul-m"
 
 inputs:
   tier:
-    description: "Tier name (medium, large, xlarge, all) - used for tagging and cache scoping"
+    description: "Tier name (medium, large, xlarge, all) - used for tagging"
     required: true
   arch:
     description: "Target architecture (amd64 or arm64)"
@@ -12,8 +12,8 @@ inputs:
   base-image:
     description: "Full BASE_IMAGE ref to build FROM (the previous tier's staging tag, or the build-category image for medium)"
     required: true
-  runner-components:
-    description: "RUNNER_COMPONENTS value passed during build"
+  components:
+    description: "COMPONENTS value passed during build"
     required: true
   smoke-test-cmd:
     description: "Bash command run inside the built image to smoke-test it"
@@ -23,9 +23,6 @@ inputs:
     required: true
   ci-run-tag:
     description: "Run-scoped tag prefix, e.g. ci-12345"
-    required: true
-  registry:
-    description: "Registry namespace used for the --cache-from fallback ref, e.g. ghcr.io/owner"
     required: true
   github-token:
     description: "Token passed as the GITHUB_TOKEN build secret (private component downloads)"
@@ -56,8 +53,7 @@ runs:
     - name: Ensure persistent BuildKit builder exists
       shell: bash
       run: |  # shell
-        # Idempotent: internal cache survives across jobs/runs on this runner,
-        # no --cache-to needed. --cache-from GHCR is used as fallback on cold cache.
+        # Idempotent: the builder's internal cache survives across jobs/runs on this runner.
         docker buildx inspect "${{ inputs.builder-name }}" >/dev/null 2>&1 || \
           docker buildx create \
             --name "${{ inputs.builder-name }}" \
@@ -102,8 +98,7 @@ runs:
         fi
         docker buildx build --builder "${{ inputs.builder-name }}" --platform "${PLATFORM}" --target runner-build \
           --build-arg "BASE_IMAGE=${{ inputs.base-image }}" \
-          --build-arg "RUNNER_COMPONENTS=${{ inputs.runner-components }}" \
-          --cache-from "type=registry,ref=${{ inputs.registry }}/gha-runner-compose-cache:${{ inputs.tier }}-${{ inputs.arch }}" \
+          --build-arg "COMPONENTS=${{ inputs.components }}" \
           --secret id=GITHUB_TOKEN,env=GITHUB_TOKEN \
           --output type=registry \
           --output type=docker \
