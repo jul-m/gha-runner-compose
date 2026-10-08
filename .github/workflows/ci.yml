@@ -5,8 +5,6 @@ on:
   workflow_dispatch: {}
   pull_request:
     types: [synchronize, opened, reopened, edited]
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -325,7 +323,7 @@ jobs:
       - build-test-category
       - test-category
       - trigger-large-tiers
-    if: always() && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    if: always() && needs.check-target.result != 'skipped' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     permissions:
       checks: write
