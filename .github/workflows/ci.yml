@@ -362,7 +362,7 @@ jobs:
             echo "${SUMMARY}"
           } >> "$GITHUB_STEP_SUMMARY"
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
-            -f name='CI result' -f head_sha="${HEAD_SHA}" -f status=completed -f conclusion="${CONCLUSION}" \
+            -f name='CI - Result' -f head_sha="${HEAD_SHA}" -f status=completed -f conclusion="${CONCLUSION}" \
             -f details_url="${RUN_URL}" -f 'output[title]'="${TITLE}" -f 'output[summary]'="${SUMMARY}" >/dev/null
           echo "conclusion=${CONCLUSION}" >> "$GITHUB_OUTPUT"
 
