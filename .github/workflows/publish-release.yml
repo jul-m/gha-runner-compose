@@ -1,24 +1,9 @@
 name: Publish Release
-
-# Runs when a main -> release PR is merged. It does not rebuild anything: every
-# image was already built (or reused unchanged) and tested by ci.yml /
-# ci-large-tiers.yml, staged to GHCR under a content-addressed
-# `content-<hash>-<name>-<arch>` tag (see those workflows' "Compute content
-# hash" step - identical formula, so the same source tree always yields the
-# same tag here). This combines the two per-arch content tags into one
-# multi-arch manifest under the release date tag, points "-latest" at it, and
-# publishes the finished GitHub release directly - no separate prerelease /
-# manual finalize step. A merge into `release` is itself the human approval
-# gate; nothing further needs verifying after that.
 run-name: "Publish Release - #${{ github.run_number }}"
 
 on:
   push:
     branches: [release]
-  # Manual re-run against the current tip of release - e.g. to retry after a
-  # failure, or to (re-)publish a merge that landed under an older version of
-  # this workflow. Idempotent: re-running for the same date-tag updates the
-  # existing tag/release in place instead of failing on "already exists".
   workflow_dispatch: {}
 
 permissions:
@@ -27,16 +12,10 @@ permissions:
 
 env:
   REGISTRY: ghcr.io/${{ github.repository_owner }}
-  # The only writer to these two: everything transient (release-PR staging,
-  # intra-run hand-off) lives in gha-runner-compose-staging instead (see ci.yml).
   BASE_IMG_NAME: gha-runner-compose-base:u24.04
   RUNNER_IMG_NAME: gha-runner-compose:u24.04
   STAGING_IMG: ghcr.io/${{ github.repository_owner }}/gha-runner-compose-staging
-  # Matches ci.yml's build-test-category matrix (see tools/prebuilt-images.csv).
   PUBLISHED_CATEGORIES: build cloud java nodejs python container dotnet
-  # Matches ci.yml's build-test-large-tiers job. A same-repo main -> release PR
-  # always triggers should_build_large_tiers, so these are staged on every
-  # release and safe to always promote here.
   LARGE_TIERS: medium large xlarge all
 
 concurrency:
@@ -58,7 +37,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |  # shell
-          # Resolve the PR that was just merged into release, and the release date tag
+          # Resolve merged PR and release tag
           PR_NUMBER=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" --jq '.[0].number // empty')
           if [[ -z "${PR_NUMBER}" ]]; then
             echo "❌ No pull request found for commit ${{ github.sha }}. Publish Release only supports merges via a main -> release PR."
@@ -69,11 +48,6 @@ jobs:
           echo "PR_NUMBER=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
           echo "TAG=${TAG}" >> "$GITHUB_OUTPUT"
 
-      # Same formula as ci.yml/ci-large-tiers.yml's "Compute content hash" -
-      # the merge into release doesn't change Dockerfile/docker-build/
-      # docker-assets/runner-images-src content, so this always matches the
-      # content tag those workflows already staged, whether it was built
-      # fresh during this PR or reused unchanged from an earlier run.
       - name: Compute content hash
         id: hash
         run: |  # shell
@@ -93,18 +67,18 @@ jobs:
           CONTENT_HASH: ${{ steps.hash.outputs.content_hash }}
           TAG: ${{ steps.resolve.outputs.TAG }}
         run: |  # shell
-          # Combine the amd64/arm64 content-tagged staging images into one multi-arch manifest
+          # Promote base image
           docker buildx imagetools create \
             --tag "${REGISTRY}/${BASE_IMG_NAME}-${TAG}" \
             "${STAGING_IMG}:content-${CONTENT_HASH}-base-amd64" \
             "${STAGING_IMG}:content-${CONTENT_HASH}-base-arm64"
 
-      - name: Promote essentials and category images
+      - name: Promote all images
         env:
           CONTENT_HASH: ${{ steps.hash.outputs.content_hash }}
           TAG: ${{ steps.resolve.outputs.TAG }}
         run: |  # shell
-          # Combine the amd64/arm64 content-tagged staging images into one multi-arch manifest per image
+          # Promote all images
           for SHORT in essentials ${PUBLISHED_CATEGORIES} ${LARGE_TIERS}; do
             echo "Promoting ${SHORT}"
             docker buildx imagetools create \
@@ -113,22 +87,21 @@ jobs:
               "${STAGING_IMG}:content-${CONTENT_HASH}-${SHORT}-arm64"
           done
 
-      - name: Tag images with latest
+      - name: Tag images with -latest
         env:
           TAG: ${{ steps.resolve.outputs.TAG }}
         run: |  # shell
-          # Point "-latest" at what was just promoted above - manifest-only,
-          # no blobs re-uploaded (imagetools create just writes a new tag).
+          # Tag images with -latest
           docker buildx imagetools create "${REGISTRY}/${BASE_IMG_NAME}-${TAG}" --tag "${REGISTRY}/${BASE_IMG_NAME}-latest"
           for SHORT in essentials ${PUBLISHED_CATEGORIES} ${LARGE_TIERS}; do
             docker buildx imagetools create "${REGISTRY}/${RUNNER_IMG_NAME}-${SHORT}-${TAG}" --tag "${REGISTRY}/${RUNNER_IMG_NAME}-${SHORT}-latest"
           done
 
-      - name: Tag the release commit
+      - name: Tag and force-push release commit
         run: |  # shell
-          # Tag the release commit - force so a manual re-run for the same
-          # date-tag (retry, or re-publishing a merge from before this
-          # workflow existed) moves it instead of failing on "already exists".
+          # Force-push: this tag is expected to move if the release date is
+          # re-run the same day (workflow_dispatch retry) or a release gets
+          # republished - never used for anything but this promoted commit.
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -f "${{ steps.resolve.outputs.TAG }}" "${{ github.sha }}"
@@ -139,16 +112,13 @@ jobs:
         env:
           TAG: ${{ steps.resolve.outputs.TAG }}
         run: |  # shell
-          # Derive release date and links from the tag, and pin the
-          # runner-images-src commit this release was built against
+          # Resolve release metadata
           SUBMODULE_COMMIT=$(git rev-parse HEAD:runner-images-src)
           RELEASE_DATE="${TAG:4:2}/${TAG:2:2}/20${TAG:0:2}"
           REPO_LINK="${{ github.server_url }}/${{ github.repository }}/tree/${TAG}"
-          {
-            echo "submodule_commit=${SUBMODULE_COMMIT}"
-            echo "release_date=${RELEASE_DATE}"
-            echo "repo_link=${REPO_LINK}"
-          } >> "$GITHUB_OUTPUT"
+          echo "submodule_commit=${SUBMODULE_COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "release_date=${RELEASE_DATE}" >> "$GITHUB_OUTPUT"
+          echo "repo_link=${REPO_LINK}" >> "$GITHUB_OUTPUT"
 
       - name: Generate release notes
         uses: actions/github-script@v8
@@ -160,7 +130,7 @@ jobs:
           REPO_LINK: ${{ steps.meta.outputs.repo_link }}
           SUBMODULE_COMMIT: ${{ steps.meta.outputs.submodule_commit }}
         with:
-          script: |  # javascript
+          script: |
             const fs = require('fs');
             const tag = process.env.TAG;
             const releaseDate = process.env.RELEASE_DATE;
@@ -172,74 +142,46 @@ jobs:
 
             let notes = `## Release ${tag}\n\n`
             notes += `- **Release Date:** ${releaseDate}\n`
-            notes += `- **Sources Files of release:** ${repoLink}\n`
-            notes += `- **Documentation of available prebuilt images:** ${repoLink}/docs/images.md\n`
-            notes += `- **Documentation of components:** ${repoLink}/docs/components.md\n`
-            notes += `- **Link to version of runner-images used for ${tag}:** https://github.com/actions/runner-images/tree/${submoduleCommit}\n\n`
+            notes += `- **Source:** ${repoLink}\n`
+            notes += `- **Docs:** [Available images](${repoLink}/docs/images.md) · [Components](${repoLink}/docs/components.md)\n`
+            notes += `- **runner-images version:** https://github.com/actions/runner-images/tree/${submoduleCommit}\n\n`
 
             const csv = fs.readFileSync('tools/prebuilt-images.csv','utf8');
             const lines = csv.split('\n').slice(1).filter(Boolean);
 
-            // get package tag -> html_url map via gh api
-            let packagesByTag = {};
+            let htmlUrlByTag = {};
             try {
               const { execSync } = require('child_process');
               const headers = "-H \"Accept: application/vnd.github+json\" -H \"X-GitHub-Api-Version: 2022-11-28\" --paginate";
-              const jq = 'reduce .[] as $item ({}; ' +
-                'reduce ($item.metadata.container.tags[]) as $tag (.; ' +
-                '($tag | split("-") | .[0:2] | join("-")) as $image | ' +
-                '.[$image] = ((.[$image] // {}) + { ($tag | split("-") | .[2:] | join("-")) : $item.html_url })' +
-                ')' +
-                ')';
+              const jq = 'reduce .[] as $item ({}; reduce ($item.metadata.container.tags[]) as $t (.; .[$t] = $item.html_url))';
 
-              const getPackageTags = (packageName) => {
+              const getTagUrls = (packageName) => {
                 const cmd = `gh api "/user/packages/container/${packageName}/versions" ${headers} --jq '${jq}'`;
                 const out = execSync(cmd, { encoding: 'utf8', env: Object.assign({}, process.env, { GH_TOKEN: process.env.GITHUB_TOKEN }) }).trim();
                 return out ? JSON.parse(out) : {};
               };
 
-              const mainTags = getPackageTags('gha-runner-compose');
-              const baseTags = getPackageTags('gha-runner-compose-base');
-              packagesByTag = Object.assign(mainTags, baseTags);
-            } catch (e) { /* ignore, fallback to registry url */ }
+              htmlUrlByTag = Object.assign(getTagUrls('gha-runner-compose'), getTagUrls('gha-runner-compose-base'));
+            } catch (e) { /* ignore */ }
 
-            const prefix = (baseName.split(':')[1] || runnerName.split(':')[1] || '');
+            notes += `## Images\n\n`
+            notes += `| Image | Pull reference |\n|---|---|\n`
 
-            // Base Image
-            notes += `## Base Image\n`
             const baseLine = lines.find(line => line.startsWith('base,'));
             if (baseLine) {
-              const [short] = baseLine.split(',');
-              const img_ref = `${registry}/${baseName}-${tag}`;
-              const baseTags = packagesByTag['u24.04-latest'];
-              const htmlUrl = baseTags?.[tag] || baseTags?.['latest'] || `https://${img_ref}`;
               const fullTag = `u24.04-${tag}`;
-              notes += `- [${img_ref}](${htmlUrl}?tag=${fullTag})\n`;
+              const img_ref = `${registry}/${baseName}-${tag}`;
+              const htmlUrl = htmlUrlByTag[fullTag] || `https://${img_ref}`;
+              notes += `| **base** | [\`${img_ref}\`](${htmlUrl}) |\n`;
             }
 
-            // Runner Images
-            notes += `\n## Runner Images\n`
             for (const line of lines) {
               const [short] = line.split(',');
-              if (short !== 'base') {
-                const imageKey = `${prefix}-${short}`;
-                const tags = packagesByTag[imageKey];
-                if (tags) {
-                  for (const [tagSuffix, htmlUrl] of Object.entries(tags)) {
-                    if (tagSuffix !== 'latest') {
-                      const fullTag = `${imageKey}-${tagSuffix}`;
-                      const img_ref = `${registry}/${runnerName}-${short}-${tagSuffix}`;
-                      notes += `- **${short}:** [${img_ref}](${htmlUrl}?tag=${fullTag})\n`;
-                    }
-                  }
-                } else {
-                  // fallback
-                  const img_ref = `${registry}/${runnerName}-${short}-${tag}`;
-                  const key = `${imageKey}-${tag}`;
-                  const htmlUrl = `https://${img_ref}?tag=${key}`;
-                  notes += `- **${short}:** [${img_ref}](${htmlUrl})\n`;
-                }
-              }
+              if (short === 'base') continue;
+              const fullTag = `u24.04-${short}-${tag}`;
+              const img_ref = `${registry}/${runnerName}-${short}-${tag}`;
+              const htmlUrl = htmlUrlByTag[fullTag] || `https://${img_ref}`;
+              notes += `| ${short} | [\`${img_ref}\`](${htmlUrl}) |\n`;
             }
 
             core.setOutput('notes', notes);
@@ -250,11 +192,7 @@ jobs:
           TAG: ${{ steps.resolve.outputs.TAG }}
           RELEASE_DATE: ${{ steps.meta.outputs.release_date }}
         run: |  # shell
-          # Published directly as the latest release - the main -> release
-          # merge is itself the approval gate, so there is nothing left to
-          # verify before this goes live. A release under this date-tag may
-          # already exist (manual re-run, or one created by an older version
-          # of this workflow) - update it in place rather than failing.
+          # Publish GitHub release
           if gh release view "${TAG}" >/dev/null 2>&1; then
             echo "Release ${TAG} already exists - updating in place."
             gh release edit "${TAG}" \
@@ -269,5 +207,4 @@ jobs:
               --latest \
               --notes "${{ steps.generate.outputs.notes }}"
           fi
-
           echo "✅ Release ${TAG} published"

@@ -8,8 +8,8 @@ services:
       args:
         # BASE_IMAGE -> gha-runner-compose image to use as base for build: see docs/images.md
         BASE_IMAGE: ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest
-        # RUNNER_COMPONENTS -> components list to add in BASE_IMAGE: see docs/components.md
-        RUNNER_COMPONENTS: yq,docker
+        # COMPONENTS -> components list to add in BASE_IMAGE: see docs/components.md
+        COMPONENTS: yq,docker
         # APT_PACKAGES -> additional APT packages to install.
         #APT_PACKAGES: maven
         # PWSH_MODULES -> additional PowerShell modules to install from PSGallery.

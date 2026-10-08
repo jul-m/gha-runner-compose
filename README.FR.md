@@ -46,13 +46,13 @@ Trois scénarios sont possibles :
     -   Idéal si une image existante vous convient presque, mais qu’il manque quelques outils. Vous pouvez ajouter uniquement les composants manquants au lieu de tout reconstruire.
     -   *Exemple :* dans `compose.build.yml`, mettez à jour les arguments de build :
         -   `BASE_IMAGE` : image de base à étendre (ex. `ghcr.io/jul-m/gha-runner-compose:u24.04-essentials-latest`).
-        -   `RUNNER_COMPONENTS` : liste des composants à ajouter. Les composants déjà présents dans l’image de base seront ignorés.
+        -   `COMPONENTS` : liste des composants à ajouter. Les composants déjà présents dans l’image de base seront ignorés.
 3.  **Construire une image depuis zéro :**
     -   Recommandé si aucune image pré-construite ne correspond à vos besoins ou si vous souhaitez optimiser au maximum la taille de l’image.
     -   Vous pouvez :
         -   Partir de l’image `ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest`, qui contient uniquement les prérequis (`BASE_IMAGE=ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest`).
         -   Construire depuis une image Ubuntu 24.04 officielle en retirant l’argument `BASE_IMAGE` (ou en le définissant sur `base`).
-    -   Listez ensuite l’ensemble des composants souhaités dans `RUNNER_COMPONENTS` (ex. `RUNNER_COMPONENTS=yq,docker,java-tools`).
+    -   Listez ensuite l’ensemble des composants souhaités dans `COMPONENTS` (ex. `COMPONENTS=yq,docker,java-tools`).
 
 Pour construire une image personnalisée, vous pouvez utiliser :
 -   **Docker Compose** avec le fichier [compose.build.yml](./compose.build.yml) (voir la section suivante).
@@ -88,10 +88,10 @@ Si vous n’avez jamais utilisé de runners GitHub auto-hébergés, consultez la
     -   **Si vous utilisez `compose.build.yml` (build personnalisé) :**
         -   Pour étendre une image :
             -   `build.args.BASE_IMAGE` : image de base à étendre.
-            -   `build.args.RUNNER_COMPONENTS` : liste des composants à ajouter.
+            -   `build.args.COMPONENTS` : liste des composants à ajouter.
         -   Pour construire depuis zéro :
             -   Supprimez ou commentez la ligne `BASE_IMAGE`.
-            -   `build.args.RUNNER_COMPONENTS` : liste complète des composants à inclure.
+            -   `build.args.COMPONENTS` : liste complète des composants à inclure.
     -   **Dans tous les cas :**
         -   `env_file` : assurez-vous qu’il référence votre fichier `.env`.
         -   `environment.RUNNER_NAME` : nom unique pour votre runner.
@@ -175,7 +175,7 @@ Vous pouvez construire des images personnalisées en utilisant `docker buildx bu
 ```bash
 docker buildx build \
     --build-arg BASE_IMAGE=ghcr.io/jul-m/gha-runner-compose-base:u24.04-latest \
-    --build-arg RUNNER_COMPONENTS=java-tools,yq,docker \
+    --build-arg COMPONENTS=java-tools,yq,docker \
     --target runner-build \
     -t my-gha-runner:latest .
 ```
@@ -185,7 +185,7 @@ docker buildx build \
 | Argument | Requis | Description |
 |---|---|---|
 | `BASE_IMAGE` | Non | Image de base à utiliser. Par défaut, le stage `base` (Ubuntu 24.04 vierge). Utilisez un tag d’image pré-construite pour l’étendre. |
-| `RUNNER_COMPONENTS` | Oui | Liste de composants et/ou catégories (`all-<category>`) séparés par des virgules. Les composants déjà installés sont ignorés. Voir [docs/components.md](./docs/components.md). |
+| `COMPONENTS` | Oui | Liste de composants et/ou catégories (`all-<category>`) séparés par des virgules. Les composants déjà installés sont ignorés. Voir [docs/components.md](./docs/components.md). |
 | `APT_PACKAGES` | Non | Liste de paquets APT supplémentaires à installer, séparés par des virgules. |
 | `PWSH_MODULES` | Non | Liste de modules PowerShell supplémentaires à installer, séparés par des virgules (ex. `Microsoft.Graph,Az`). |
 
@@ -234,7 +234,7 @@ Le pipeline de build s’appuie sur un `Dockerfile` multi-étapes et réutilise 
 
 -   **Étapes principales du `Dockerfile` :**
     1.  **`base` :** copie les scripts upstream figés et la logique locale, installe les paquets de base, crée l’utilisateur `runner`, exécute `install-prereqs.sh` (runner GitHub Actions + PowerShell), et configure l’entrypoint.
-    2.  **`runner-build` :** hérite de `${BASE_IMAGE}` (par défaut le stage `base`). Exécute `install-components.sh` piloté par `RUNNER_COMPONENTS`, résout les dépendances et catégories depuis `components.csv`, et enregistre les composants installés dans `/imagegeneration/installed/components.txt`.
+    2.  **`runner-build` :** hérite de `${BASE_IMAGE}` (par défaut le stage `base`). Exécute `install-components.sh` piloté par `COMPONENTS`, résout les dépendances et catégories depuis `components.csv`, et enregistre les composants installés dans `/imagegeneration/installed/components.txt`.
 
 -   **Logique d’override par composant :**
     -   Pour chaque composant `<comp>`, l’orchestrateur cherche d’abord un script local `docker-build/components/<comp>.sh`.

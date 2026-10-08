@@ -35,8 +35,8 @@ declare -A INSTALLED_COMPONENTS=()
 declare -A INSTALLED_APT_PACKAGES=()
 declare -A INSTALLED_PWSH_MODULES=()
 
-# Split RUNNER_COMPONENTS build env var values into array
-IFS=',' read -ra components <<< "${RUNNER_COMPONENTS:-}"
+# Split COMPONENTS build env var values into array
+IFS=',' read -ra components <<< "${COMPONENTS:-}"
 
 
 # ===== FUNCTIONS ===== #
@@ -227,7 +227,7 @@ expand_components() {
         if [ "$item" == "all" ]; then
             # Check if 'all' is alone
             if [ ${#components[@]} -gt 1 ]; then
-                fail "'all' can only be used alone in RUNNER_COMPONENTS"
+                fail "'all' can only be used alone in COMPONENTS"
             fi
         elif [[ "$item" == all-* ]]; then
             # Check if category exists
@@ -394,6 +394,13 @@ process_component() {
 # Steps to run before installing components
 run_preinstall() {
     log "Running pre-installation steps"
+
+    # Force non-interactive behavior across upstream install scripts.
+    # UNZIPOPT avoids overwrite prompts (e.g. LICENSE.txt collisions in /usr/local/bin).
+    export DEBIAN_FRONTEND="${DEBIAN_FRONTEND:-noninteractive}"
+    export NONINTERACTIVE="${NONINTERACTIVE:-1}"
+    export UNZIPOPT="-o"
+    export GIT_TERMINAL_PROMPT=0
 
     # Load packages lists for components scripts with "apt-get install"
     log "=> Preloading apt packages lists"
