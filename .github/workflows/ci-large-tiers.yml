@@ -143,7 +143,7 @@ jobs:
   build-tier-large-amd64:
     name: Build all-tier-large - amd64
     needs: [check-target, build-tier-medium-amd64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-amd64.result != 'failure' && needs.build-tier-medium-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['large-amd64'] != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-tier-medium-amd64.result == 'success' || fromJSON(needs.check-target.outputs.exists_json)['medium-amd64'] == true) && fromJSON(needs.check-target.outputs.exists_json)['large-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images-amd64]
     timeout-minutes: 90
     steps:
@@ -173,7 +173,7 @@ jobs:
   build-tier-xlarge-amd64:
     name: Build all-tier-xlarge - amd64
     needs: [check-target, build-tier-large-amd64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-amd64.result != 'failure' && needs.build-tier-large-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['xlarge-amd64'] != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-tier-large-amd64.result == 'success' || fromJSON(needs.check-target.outputs.exists_json)['large-amd64'] == true) && fromJSON(needs.check-target.outputs.exists_json)['xlarge-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images-amd64]
     timeout-minutes: 120
     steps:
@@ -203,7 +203,7 @@ jobs:
   build-tier-all-amd64:
     name: Build all - amd64
     needs: [check-target, build-tier-xlarge-amd64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-amd64.result != 'failure' && needs.build-tier-xlarge-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['all-amd64'] != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-tier-xlarge-amd64.result == 'success' || fromJSON(needs.check-target.outputs.exists_json)['xlarge-amd64'] == true) && fromJSON(needs.check-target.outputs.exists_json)['all-amd64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images-amd64]
     timeout-minutes: 120
     steps:
@@ -265,7 +265,7 @@ jobs:
   build-tier-large-arm64:
     name: Build all-tier-large - arm64
     needs: [check-target, build-tier-medium-arm64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-arm64.result != 'failure' && needs.build-tier-medium-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['large-arm64'] != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-tier-medium-arm64.result == 'success' || fromJSON(needs.check-target.outputs.exists_json)['medium-arm64'] == true) && fromJSON(needs.check-target.outputs.exists_json)['large-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images-arm64]
     timeout-minutes: 90
     steps:
@@ -295,7 +295,7 @@ jobs:
   build-tier-xlarge-arm64:
     name: Build all-tier-xlarge - arm64
     needs: [check-target, build-tier-large-arm64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-arm64.result != 'failure' && needs.build-tier-large-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['xlarge-arm64'] != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-tier-large-arm64.result == 'success' || fromJSON(needs.check-target.outputs.exists_json)['large-arm64'] == true) && fromJSON(needs.check-target.outputs.exists_json)['xlarge-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images-arm64]
     timeout-minutes: 120
     steps:
@@ -325,7 +325,7 @@ jobs:
   build-tier-all-arm64:
     name: Build all - arm64
     needs: [check-target, build-tier-xlarge-arm64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-arm64.result != 'failure' && needs.build-tier-xlarge-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['all-arm64'] != true
+    if: always() && needs.check-target.outputs.should_run == 'true' && (needs.build-tier-xlarge-arm64.result == 'success' || fromJSON(needs.check-target.outputs.exists_json)['xlarge-arm64'] == true) && fromJSON(needs.check-target.outputs.exists_json)['all-arm64'] != true
     runs-on: [self-hosted, gha-runner-compose-large-images-arm64]
     timeout-minutes: 120
     steps:
