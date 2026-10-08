@@ -109,12 +109,12 @@ jobs:
 
           echo "should_run=true" >> "$GITHUB_OUTPUT"
 
-  # Tier chain (amd64): medium -> large -> xlarge -> all.
+  # Tier chain (amd64): medium -> large -> xlarge -> all, independent of the arm64 chain.
   build-tier-medium-amd64:
     name: Build all-tier-medium - amd64
     needs: check-target
     if: needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json)['medium-amd64'] != true
-    runs-on: [self-hosted, gha-runner-compose-large-images]
+    runs-on: [self-hosted, gha-runner-compose-large-images-amd64]
     timeout-minutes: 90
     steps:
       - name: Checkout code
@@ -144,7 +144,7 @@ jobs:
     name: Build all-tier-large - amd64
     needs: [check-target, build-tier-medium-amd64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-amd64.result != 'failure' && needs.build-tier-medium-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['large-amd64'] != true
-    runs-on: [self-hosted, gha-runner-compose-large-images]
+    runs-on: [self-hosted, gha-runner-compose-large-images-amd64]
     timeout-minutes: 90
     steps:
       - name: Checkout code
@@ -174,7 +174,7 @@ jobs:
     name: Build all-tier-xlarge - amd64
     needs: [check-target, build-tier-large-amd64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-amd64.result != 'failure' && needs.build-tier-large-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['xlarge-amd64'] != true
-    runs-on: [self-hosted, gha-runner-compose-large-images]
+    runs-on: [self-hosted, gha-runner-compose-large-images-amd64]
     timeout-minutes: 120
     steps:
       - name: Checkout code
@@ -204,7 +204,7 @@ jobs:
     name: Build all - amd64
     needs: [check-target, build-tier-xlarge-amd64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-amd64.result != 'failure' && needs.build-tier-xlarge-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['all-amd64'] != true
-    runs-on: [self-hosted, gha-runner-compose-large-images]
+    runs-on: [self-hosted, gha-runner-compose-large-images-amd64]
     timeout-minutes: 120
     steps:
       - name: Checkout code
@@ -230,14 +230,13 @@ jobs:
           github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-all-amd64
 
-  # Tier chain (arm64): medium -> large -> xlarge -> all. Chained after the
-  # amd64 "all" tier (not run in parallel) so both arches never compete for
-  # the same persistent self-hosted builder at once.
+  # Tier chain (arm64): medium -> large -> xlarge -> all, independent of the amd64 chain. Where each
+  # chain runs is decided by the runners registered with the gha-runner-compose-large-images-<arch> labels.
   build-tier-medium-arm64:
     name: Build all-tier-medium - arm64
-    needs: [check-target, build-tier-all-amd64]
-    if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-all-amd64.result != 'failure' && needs.build-tier-all-amd64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['medium-arm64'] != true
-    runs-on: [self-hosted, gha-runner-compose-large-images]
+    needs: check-target
+    if: needs.check-target.outputs.should_run == 'true' && fromJSON(needs.check-target.outputs.exists_json)['medium-arm64'] != true
+    runs-on: [self-hosted, gha-runner-compose-large-images-arm64]
     timeout-minutes: 90
     steps:
       - name: Checkout code
@@ -267,7 +266,7 @@ jobs:
     name: Build all-tier-large - arm64
     needs: [check-target, build-tier-medium-arm64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-medium-arm64.result != 'failure' && needs.build-tier-medium-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['large-arm64'] != true
-    runs-on: [self-hosted, gha-runner-compose-large-images]
+    runs-on: [self-hosted, gha-runner-compose-large-images-arm64]
     timeout-minutes: 90
     steps:
       - name: Checkout code
@@ -297,7 +296,7 @@ jobs:
     name: Build all-tier-xlarge - arm64
     needs: [check-target, build-tier-large-arm64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-large-arm64.result != 'failure' && needs.build-tier-large-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['xlarge-arm64'] != true
-    runs-on: [self-hosted, gha-runner-compose-large-images]
+    runs-on: [self-hosted, gha-runner-compose-large-images-arm64]
     timeout-minutes: 120
     steps:
       - name: Checkout code
@@ -327,7 +326,7 @@ jobs:
     name: Build all - arm64
     needs: [check-target, build-tier-xlarge-arm64]
     if: always() && needs.check-target.outputs.should_run == 'true' && needs.build-tier-xlarge-arm64.result != 'failure' && needs.build-tier-xlarge-arm64.result != 'cancelled' && fromJSON(needs.check-target.outputs.exists_json)['all-arm64'] != true
-    runs-on: [self-hosted, gha-runner-compose-large-images]
+    runs-on: [self-hosted, gha-runner-compose-large-images-arm64]
     timeout-minutes: 120
     steps:
       - name: Checkout code
@@ -352,3 +351,95 @@ jobs:
           ci-run-tag: ${{ env.CI_RUN_TAG }}
           github-token: ${{ github.token }}
           content-tag: ${{ env.STAGING_IMG }}:content-${{ needs.check-target.outputs.content_hash }}-all-arm64
+
+  # Last job, on GitHub, once both flows are over (whatever their outcome): lists the tier images in the
+  # workflow summary and publishes the "Large tiers result" check run (required by branch protection).
+  status:
+    name: CI-Large-Tiers Status
+    needs:
+      - check-target
+      - build-tier-medium-amd64
+      - build-tier-large-amd64
+      - build-tier-xlarge-amd64
+      - build-tier-all-amd64
+      - build-tier-medium-arm64
+      - build-tier-large-arm64
+      - build-tier-xlarge-arm64
+      - build-tier-all-arm64
+    if: always() && needs.check-target.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      packages: read
+    steps:
+      - name: Generate summary
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          CONTENT_HASH: ${{ needs.check-target.outputs.content_hash }}
+          EXISTS_JSON: ${{ needs.check-target.outputs.exists_json }}
+          SOURCE_REF: ${{ needs.check-target.outputs.ref }}
+          GH_ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |  # shell
+          # Generate summary: one row per tier and architecture
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GH_ACTOR}" --password-stdin >/dev/null
+          {
+            echo "## Large tier images"
+            echo
+            echo "Commit \`${SOURCE_REF:0:7}\` - content hash \`${CONTENT_HASH}\`"
+            echo
+            echo "| Tier | Arch | Status | Digest | Compressed size | Image |"
+            echo "|---|---|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for TIER in medium large xlarge all; do
+            for ARCH in amd64 arm64; do
+              RESULT=$(jq -r --arg j "build-tier-${TIER}-${ARCH}" '.[$j].result' <<<"${NEEDS}")
+              EXISTED=$(jq -r --arg k "${TIER}-${ARCH}" '.[$k]' <<<"${EXISTS_JSON}")
+              REF="${{ env.STAGING_IMG }}:content-${CONTENT_HASH}-${TIER}-${ARCH}"
+              case "${RESULT}" in
+                success) [[ "${EXISTED}" == "true" ]] && STATUS="♻️ reused" || STATUS="✅ built" ;;
+                skipped) [[ "${EXISTED}" == "true" ]] && STATUS="♻️ reused" || STATUS="⏭️ skipped (previous tier failed)" ;;
+                failure) STATUS="❌ failed" ;;
+                cancelled) STATUS="🚫 cancelled" ;;
+                *) STATUS="${RESULT}" ;;
+              esac
+              DIGEST="-"; SIZE="-"
+              if [[ "${STATUS}" == "✅ built" || "${STATUS}" == "♻️ reused" ]]; then
+                DIGEST=$(docker buildx imagetools inspect "${REF}" --format '{{.Manifest.Digest}}' 2>/dev/null || echo "-")
+                BYTES=$(docker buildx imagetools inspect --raw "${REF}" 2>/dev/null | jq -r '[.layers[]?.size] | if length > 0 then add else empty end' || true)
+                [[ -n "${BYTES}" ]] && SIZE="$(awk -v b="${BYTES}" 'BEGIN{printf "%.1f GB", b/1073741824}')"
+              fi
+              echo "| ${TIER} | ${ARCH} | ${STATUS} | \`${DIGEST:0:19}\` | ${SIZE} | \`${REF}\` |" >> "$GITHUB_STEP_SUMMARY"
+            done
+          done
+
+      - name: Publish check run
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEEDS: ${{ toJSON(needs) }}
+          HEAD_SHA: ${{ inputs.source_sha || github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |  # shell
+          # Publish check run: "Large tiers result" on the commit under test, mirroring the whole workflow
+          FAILED=$(jq -r 'to_entries[] | select(.value.result == "failure") | .key' <<<"${NEEDS}" | paste -sd, -)
+          CANCELLED=$(jq -r 'to_entries[] | select(.value.result == "cancelled") | .key' <<<"${NEEDS}" | paste -sd, -)
+          if [[ -n "${FAILED}" ]]; then
+            CONCLUSION=failure; TITLE="Failed: ${FAILED}"
+          elif [[ -n "${CANCELLED}" ]]; then
+            CONCLUSION=cancelled; TITLE="Cancelled: ${CANCELLED}"
+          else
+            CONCLUSION=success; TITLE="All tiers built or reused"
+          fi
+          SUMMARY=$(sed -n '/^| Tier /,$p' "$GITHUB_STEP_SUMMARY")
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Large tiers result' -f head_sha="${HEAD_SHA}" -f status=completed -f conclusion="${CONCLUSION}" \
+            -f details_url="${RUN_URL}" -f 'output[title]'="${TITLE}" -f 'output[summary]'="${SUMMARY:-See the workflow summary}" >/dev/null
+          echo "conclusion=${CONCLUSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Fail when a flow failed
+        if: steps.check.outputs.conclusion != 'success'
+        run: |  # shell
+          # Fail when a flow failed: mirror the check run's conclusion on this job
+          echo "::error::Large tiers: ${{ steps.check.outputs.conclusion }}, see the summary above."
+          exit 1

@@ -1,3 +1,4 @@
 self-hosted-runner:
   labels:
-    - gha-runner-compose-large-images
+    - gha-runner-compose-large-images-amd64
+    - gha-runner-compose-large-images-arm64

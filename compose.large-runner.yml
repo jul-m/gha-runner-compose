@@ -11,7 +11,7 @@ name: gha-runner-compose-large-runner
 # Then create .env.large-runner with:
 #   RUNNER_REPO_URL=https://github.com/jul-m/gha-runner-compose
 #   RUNNER_TOKEN=<registration_token>   # gh api -X POST repos/jul-m/gha-runner-compose/actions/runners/registration-token --jq '.token'
-#   RUNNER_LABELS=gha-runner-compose-large-images
+#   RUNNER_LABELS=gha-runner-compose-large-images-amd64,gha-runner-compose-large-images-arm64
 #
 # Start with: docker compose -f compose.large-runner.yml up -d
 

@@ -312,3 +312,63 @@ jobs:
             -f source_sha="${{ github.event.pull_request.head.sha }}" \
             -f source_branch="${{ github.event.pull_request.head.ref }}" \
             -f source_pr_number="${{ github.event.pull_request.number }}"
+
+  # Last job: writes the workflow summary and publishes the "CI result" check run (required by branch protection).
+  status:
+    name: CI Status
+    needs:
+      - check-target
+      - build-test-base
+      - test-base
+      - build-test-essentials
+      - test-essentials
+      - build-test-category
+      - test-category
+      - trigger-large-tiers
+    if: always() && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+    steps:
+      - name: Generate summary and publish check run
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEEDS: ${{ toJSON(needs) }}
+          RUNNER_TESTS: ${{ needs.check-target.outputs.runner_tests }}
+          CONTENT_HASH: ${{ needs.check-target.outputs.content_hash }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |  # shell
+          # Generate summary and publish check run: failure/cancelled job -> failure; skipped jobs are fine
+          FAILED=$(jq -r 'to_entries[] | select(.value.result == "failure") | .key' <<<"${NEEDS}" | paste -sd, -)
+          CANCELLED=$(jq -r 'to_entries[] | select(.value.result == "cancelled") | .key' <<<"${NEEDS}" | paste -sd, -)
+          if [[ -n "${FAILED}" ]]; then
+            CONCLUSION=failure; TITLE="Failed: ${FAILED}"
+          elif [[ -n "${CANCELLED}" ]]; then
+            CONCLUSION=cancelled; TITLE="Cancelled: ${CANCELLED}"
+          elif [[ "${RUNNER_TESTS}" != "true" ]]; then
+            CONCLUSION=success; TITLE="Passed, but runner tests were skipped (no GitHub App or ACTION_GH_TOKEN secret)"
+          else
+            CONCLUSION=success; TITLE="All jobs passed or were skipped"
+          fi
+          TABLE=$(jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"' <<<"${NEEDS}")
+          SUMMARY=$(printf '| Job | Result |\n|---|---|\n%s\n' "${TABLE}")
+          {
+            echo "## CI: ${TITLE}"
+            echo
+            echo "Commit \`${HEAD_SHA:0:7}\` - content hash \`${CONTENT_HASH:-n/a}\`"
+            echo
+            echo "${SUMMARY}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='CI result' -f head_sha="${HEAD_SHA}" -f status=completed -f conclusion="${CONCLUSION}" \
+            -f details_url="${RUN_URL}" -f 'output[title]'="${TITLE}" -f 'output[summary]'="${SUMMARY}" >/dev/null
+          echo "conclusion=${CONCLUSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Fail when the workflow failed
+        if: steps.check.outputs.conclusion != 'success'
+        run: |  # shell
+          # Fail when the workflow failed: mirror the check run's conclusion on this job
+          echo "::error::CI: ${{ steps.check.outputs.conclusion }}, see the summary above."
+          exit 1
