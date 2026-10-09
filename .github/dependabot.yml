@@ -1,0 +1,14 @@
+version: 2
+
+updates:
+  # GitHub Actions used in .github/workflows/ and in the composite actions under .github/actions/
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/.github/actions/*"
+    schedule:
+      interval: "monthly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
