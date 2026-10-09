@@ -191,6 +191,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.resolve.outputs.TAG }}
           RELEASE_DATE: ${{ steps.meta.outputs.release_date }}
+          NOTES: ${{ steps.generate.outputs.notes }}
         run: |  # shell
           # Publish GitHub release
           if gh release view "${TAG}" >/dev/null 2>&1; then
@@ -199,12 +200,12 @@ jobs:
               --title "${TAG} (${RELEASE_DATE})" \
               --latest \
               --prerelease=false \
-              --notes "${{ steps.generate.outputs.notes }}"
+              --notes "${NOTES}"
           else
             gh release create "${TAG}" \
               --target "${{ github.sha }}" \
               --title "${TAG} (${RELEASE_DATE})" \
               --latest \
-              --notes "${{ steps.generate.outputs.notes }}"
+              --notes "${NOTES}"
           fi
           echo "✅ Release ${TAG} published"

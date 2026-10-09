@@ -1,6 +1,6 @@
 name: "Build & Test Runner Image"
-description: "Builds, boots, waits, and cleans up a GitHub Actions runner container for a given image"
 author: "jul-m"
+description: "Builds, boots, waits, and cleans up a GitHub Actions runner container for a given image"
 
 inputs:
   image-tag:
@@ -40,7 +40,9 @@ inputs:
     required: false
     default: ""
   admin-token:
-    description: "PAT with administration:write (mode 2, used when no App credentials are given). With neither, the self-hosted runner test is skipped with a warning"
+    description: |
+      PAT with administration:write (mode 2, used when no App credentials are given).
+      With neither, the self-hosted runner test is skipped with a warning.
     required: false
     default: ""
   skip-build:
@@ -52,11 +54,16 @@ inputs:
     required: false
     default: ""
   own-job-name:
-    description: "This build job's own workflow job name, so the orphaned-job sweep can exclude itself (a running job never sees its own conclusion)"
+    description: |
+      This build job's own workflow job name, so the orphaned-job sweep can exclude itself
+      (a running job never sees its own conclusion).
     required: false
     default: ""
   content-tag:
-    description: "Full content-addressed registry ref (e.g. staging:content-<hash>-base-amd64). If it already exists, skip the rebuild and pull it instead - the image still gets re-tested below either way, just without paying for docker build again."
+    description: |
+      Full content-addressed registry ref (e.g. staging:content-<hash>-base-amd64).
+      If it already exists, skip the rebuild and pull it instead.
+      The image still gets re-tested below either way, just without paying for docker build again.
     required: false
     default: ""
 
@@ -155,11 +162,9 @@ runs:
       id: check-reuse
       shell: bash
       run: |  # shell
-        # If this exact content (Dockerfile/docker-build/docker-assets/
-        # runner-images-src) already built successfully before, skip the
-        # expensive rebuild and pull the existing image instead - it still
-        # gets re-tested below like any other build, just without paying
-        # for docker build again.
+        # Check for reusable content-tagged image
+        # If this exact content (Dockerfile/docker-build/docker-assets/runner-images-src) already built successfully
+        # before, skip the expensive rebuild and pull the existing image instead
         if docker buildx imagetools inspect "${{ inputs.content-tag }}" >/dev/null 2>&1; then
           echo "Reusing ${{ inputs.content-tag }} - content unchanged since it was last built."
           echo "reused=true" >> "$GITHUB_OUTPUT"
@@ -282,13 +287,11 @@ runs:
       if: inputs.push-image-refs != ''
       shell: bash
       run: |  # shell
-        # Push tested image to registry under each given ref (one per line):
-        # a CI-run-scoped ref other jobs in this run pull as their BASE_IMAGE,
-        # and the content-addressed ref future runs check to skip rebuilding
-        # this exact content - also what publish-release.yml promotes
-        # directly on a release, no rebuild or PR-scoped tag needed. Pushing
-        # the content-tag again when reused is a cheap no-op (same digest
-        # already there).
+        # Push tested image to registry
+        # Push tested image to registry under each given ref (one per line): a CI-run-scoped ref other jobs in this run
+        # pull as their BASE_IMAGE, and the content-addressed ref future runs check to skip rebuilding this exact
+        # content - also what publish-release.yml promotes directly on a release, no rebuild or PR-scoped tag needed.
+        # Pushing the content-tag again when reused is a cheap no-op (same digest already there).
         while IFS= read -r REF; do
           [[ -z "${REF}" ]] && continue
           docker tag "${IMAGE_TAG}" "${REF}"
@@ -327,9 +330,10 @@ runs:
         GH_TOKEN: ${{ steps.app-token.outputs.token || inputs.admin-token }}
         RUN_TOKEN: ${{ github.token }}
       run: |  # shell
-        # Rescue orphaned test job: the build failed, so the container runner the "Test" job waits for
-        # never registers. Start a bare runner agent on this host with the same label; the Test job
-        # sees its name (rescue-*) and fails at once instead of queueing for hours.
+        # Rescue orphaned test job
+        # The build failed, so the container runner the "Test" job waits for  never registers.
+        # Start a bare runner agent on this host with the same label; the Test job sees its name (rescue-*)
+        # and fails at once instead of queueing for hours.
         JOB_JSON=$(GH_TOKEN="${RUN_TOKEN}" gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
           --jq ".jobs[] | select(.name == \"${{ inputs.test-job-name }}\")") || true
         if [[ "$(jq -r '.status // ""' <<<"${JOB_JSON}")" != "queued" ]]; then
@@ -361,18 +365,8 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |  # shell
-        # A failed build leaves its self-hosted test job queued forever - no
-        # matching runner will ever register, and GitHub only auto-cancels
-        # self-hosted queued jobs after 24-48h (timeout-minutes only bounds
-        # execution time once a runner picks the job up, not queue time).
-        # Runs on every invocation - success or failure - so whichever build
-        # job finishes last sweeps up any earlier stragglers. Only cancels
-        # once every OTHER build job in the run has reached a terminal state,
-        # so a category still actively building is never interrupted (that's
-        # what caused the mass-cancellation bug this replaced). This job's
-        # own entry is excluded from that check: it can never see its own
-        # conclusion while still running this step, so counting it would
-        # make the check impossible to satisfy.
+        # Sweep orphaned dependent jobs
+        # A failed build leaves its self-hosted test job queued forever: force cancel them.
         OWN_JOB_NAME="${{ inputs.own-job-name }}"
         ALL_JOBS=$(gh api --paginate "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" --jq '.jobs') || exit 0
 

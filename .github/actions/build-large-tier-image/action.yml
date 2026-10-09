@@ -1,6 +1,8 @@
 name: "Build Large Tier Image"
-description: "Builds one medium/large/xlarge/all tier on the persistent self-hosted BuildKit builder, pushing straight to GHCR staging (never a local registry)"
 author: "jul-m"
+description: |
+  Builds one medium/large/xlarge/all tier on the persistent self-hosted BuildKit builder, 
+  pushing straight to GHCR staging (never a local registry)
 
 inputs:
   tier:
@@ -32,7 +34,9 @@ inputs:
     required: false
     default: "gha-large-runner-builder"
   content-tag:
-    description: "Full content-addressed registry ref (e.g. staging:content-<hash>-medium-amd64). If it already exists, skip the rebuild and pull it instead - still re-smoke-tested below either way."
+    description: |
+      Full content-addressed registry ref (e.g. staging:content-<hash>-medium-amd64).
+      If it already exists, skip the rebuild and pull it instead - still re-smoke-tested below either way.
     required: false
     default: ""
 
@@ -53,7 +57,7 @@ runs:
     - name: Ensure persistent BuildKit builder exists
       shell: bash
       run: |  # shell
-        # Idempotent: the builder's internal cache survives across jobs/runs on this runner.
+        # Idempotent: the builder internal cache survives across jobs/runs on this runner.
         docker buildx inspect "${{ inputs.builder-name }}" >/dev/null 2>&1 || \
           docker buildx create \
             --name "${{ inputs.builder-name }}" \
@@ -67,9 +71,9 @@ runs:
       id: check-reuse
       shell: bash
       run: |  # shell
-        # If this exact content already built successfully before, skip the
-        # expensive rebuild and pull the existing image instead - it still
-        # gets re-smoke-tested below like any other build.
+        # Check for reusable content-tagged image
+        # If this exact content already built successfully before, skip the expensive rebuild and pull the existing
+        # image instead - it still gets re-smoke-tested below like any other build.
         if docker buildx imagetools inspect "${{ inputs.content-tag }}" >/dev/null 2>&1; then
           echo "Reusing ${{ inputs.content-tag }} - content unchanged since it was last built."
           echo "reused=true" >> "$GITHUB_OUTPUT"
@@ -83,10 +87,7 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: |  # shell
-        # Build straight FROM the previous tier's staging tag and push to the registry only: the
-        # image never enters the host's Docker store (tier images weigh 20-45 GB each).
-        # Also tags the content-addressed ref in the same push, when given, so future runs with
-        # identical content can skip rebuilding this tier.
+        # Build and push ${{ inputs.tier }} image (${{ inputs.arch }})
         TAGS=(-t "${IMAGE_REF}")
         if [[ -n "${{ inputs.content-tag }}" ]]; then
           TAGS+=(-t "${{ inputs.content-tag }}")
@@ -100,9 +101,12 @@ runs:
 
     - name: Smoke-test ${{ inputs.tier }} image (${{ inputs.arch }})
       shell: bash
+      env:
+        SMOKE_CMD: ${{ inputs.smoke-test-cmd }}
       run: |  # shell
-        # Run the smoke test as a BuildKit RUN on the image just pushed (or the reused content-tagged
-        # one): BuildKit already holds its layers, so nothing is pulled into the host's Docker store.
+        # Smoke-test ${{ inputs.tier }} image (${{ inputs.arch }})
+        # Run the smoke test as a BuildKit RUN on the image just pushed (or the reused content-tagged one):
+        # BuildKit already holds its layers, so nothing is pulled into the host's Docker store.
         # --no-cache so the RUN executes every time instead of replaying a cached result.
         if [[ "${{ steps.check-reuse.outputs.reused }}" == "true" ]]; then
           TARGET_REF="${{ inputs.content-tag }}"
@@ -117,5 +121,3 @@ runs:
         ARG SMOKE_CMD
         RUN bash -c "${SMOKE_CMD}"
         EOF
-      env:
-        SMOKE_CMD: ${{ inputs.smoke-test-cmd }}
