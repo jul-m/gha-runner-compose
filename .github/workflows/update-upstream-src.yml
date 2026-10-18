@@ -74,12 +74,21 @@ jobs:
             echo "modified=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Generate GitHub App token
+        id: app_token
+        if: steps.copy_sources.outputs.modified == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_KEY }}
+
       - name: Create or update pull request
         id: cpr
         if: steps.copy_sources.outputs.modified == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # App token (not GITHUB_TOKEN): the PR then triggers the pull_request CI without approval
+          token: ${{ steps.app_token.outputs.token }}
           branch: update-runner-images
           title: Update runner images sources
           body: Automated update of runner images sources from upstream.
@@ -88,21 +97,6 @@ jobs:
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           delete-branch: true
-
-      - name: Dispatch CI on the PR branch
-        if: steps.cpr.outputs.pull-request-operation == 'created' || steps.cpr.outputs.pull-request-operation == 'updated'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |  # shell
-          # A PR opened with GITHUB_TOKEN never triggers pull_request workflows; a dispatch run
-          # reports its checks on the branch head commit, i.e. on the PR itself.
-          gh workflow run ci.yml --repo "${{ github.repository }}" --ref update-runner-images
-          # The pull_request run of the same push is stuck on action_required (bot PR): delete it, the dispatch run replaces it
-          sleep 10
-          for id in $(gh run list --repo "${{ github.repository }}" --workflow ci.yml --branch update-runner-images \
-              --event pull_request --status action_required --json databaseId --jq '.[].databaseId'); do
-            gh run delete "$id" --repo "${{ github.repository }}" || true
-          done
 
       - name: Commit and push submodule update
         if: steps.check_changes.outputs.changes == 'true' && steps.copy_sources.outputs.modified == 'false'
