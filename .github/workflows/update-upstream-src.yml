@@ -84,6 +84,9 @@ jobs:
           title: Update runner images sources
           body: Automated update of runner images sources from upstream.
           commit-message: Update runner images sources
+          # Default author is the triggering user (the cron owner), which shows up as co-author
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           delete-branch: true
 
       - name: Dispatch CI on the PR branch
@@ -94,6 +97,12 @@ jobs:
           # A PR opened with GITHUB_TOKEN never triggers pull_request workflows; a dispatch run
           # reports its checks on the branch head commit, i.e. on the PR itself.
           gh workflow run ci.yml --repo "${{ github.repository }}" --ref update-runner-images
+          # The pull_request run of the same push waits for approval forever: drop it, the dispatch run replaces it
+          sleep 10
+          for id in $(gh run list --repo "${{ github.repository }}" --workflow ci.yml --branch update-runner-images \
+              --event pull_request --status action_required --json databaseId --jq '.[].databaseId'); do
+            gh run cancel "$id" --repo "${{ github.repository }}" || true
+          done
 
       - name: Commit and push submodule update
         if: steps.check_changes.outputs.changes == 'true' && steps.copy_sources.outputs.modified == 'false'
