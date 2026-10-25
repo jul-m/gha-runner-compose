@@ -359,9 +359,13 @@ jobs:
             echo
             echo "${SUMMARY}"
           } >> "$GITHUB_STEP_SUMMARY"
+          echo "Needs results:"
+          echo "${SUMMARY}"
+          echo "Publishing check run 'CI - Result' on ${HEAD_SHA} (conclusion=${CONCLUSION}, title='${TITLE}')"
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
             -f name='CI - Result' -f head_sha="${HEAD_SHA}" -f status=completed -f conclusion="${CONCLUSION}" \
-            -f details_url="${RUN_URL}" -f 'output[title]'="${TITLE}" -f 'output[summary]'="${SUMMARY}" >/dev/null
+            -f details_url="${RUN_URL}" -f 'output[title]'="${TITLE}" -f 'output[summary]'="${SUMMARY}" \
+            --jq '"Created check run \(.id) \(.name) on \(.head_sha) in check suite \(.check_suite.id): \(.status)/\(.conclusion) \(.html_url)"'
           echo "conclusion=${CONCLUSION}" >> "$GITHUB_OUTPUT"
 
       - name: Fail when the workflow failed
