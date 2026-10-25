@@ -20,6 +20,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.repository.default_branch }}
           submodules: true
 
       - name: Config & Update submodule
@@ -76,7 +77,7 @@ jobs:
 
       - name: Generate GitHub App token
         id: app_token
-        if: steps.copy_sources.outputs.modified == 'true'
+        if: steps.check_changes.outputs.changes == 'true'
         uses: actions/create-github-app-token@v3
         with:
           client-id: ${{ secrets.GH_APP_CLIENT_ID }}
@@ -98,13 +99,51 @@ jobs:
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           delete-branch: true
 
-      - name: Commit and push submodule update
+      - name: Fast-forward submodule update through a temporary branch
         if: steps.check_changes.outputs.changes == 'true' && steps.copy_sources.outputs.modified == 'false'
+        timeout-minutes: 90
+        env:
+          # App token: the PR it opens triggers the pull_request CI that produces the required "CI - Result" check
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          SUBMODULE_REF: ${{ steps.copy_sources.outputs.submodule_ref }}
         run: |  # shell
-          # Commit and push submodule update
-          git add runner-images-src
-          git commit -m "[auto] Update runner-images-src submodule to ${{ steps.copy_sources.outputs.submodule_ref }}"
-          git push
+          # The base branch only accepts commits that already carry a passing "CI - Result": run it on a temporary
+          # branch, then push that exact SHA (fast-forward) so the check applies to it
+          set -euo pipefail
+          branch=tmp/update-runner-images-src
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git commit -m "Update runner-images-src submodule to ${SUBMODULE_REF}"
+          sha=$(git rev-parse HEAD)
+          git push --force "$remote" "HEAD:refs/heads/${branch}"
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base "$BASE_BRANCH" --head "$branch" \
+              --title "Update runner-images-src submodule to ${SUBMODULE_REF}" \
+              --body "Automated submodule bump (mirrored scripts unchanged), fast-forwarded once CI - Result passes."
+          fi
+
+          while true; do
+            read -r total pending failed <<< "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/check-runs" --jq \
+              '[.check_runs[] | select(.name == "CI - Result")] | "\(length) \([.[] | select(.status != "completed")] | length) \([.[] | select(.conclusion != "success")] | length)"')"
+            echo "CI - Result on ${sha}: total=${total} pending=${pending} not-success=${failed}"
+            if [ "$total" -eq 0 ] || [ "$pending" -gt 0 ]; then
+              sleep 60
+            elif [ "$failed" -gt 0 ]; then
+              echo "::error::CI - Result failed on ${sha}; the temporary branch and PR are kept for inspection"
+              exit 1
+            else
+              break
+            fi
+          done
+
+          git fetch --depth=1 "$remote" "$BASE_BRANCH"
+          git merge-base --is-ancestor FETCH_HEAD "$sha" \
+            || { echo "::error::${BASE_BRANCH} moved since the check ran, rerun the workflow"; exit 1; }
+          git push "$remote" "${sha}:refs/heads/${BASE_BRANCH}"
+          # GitHub may already have deleted the branch when the PR got merged
+          git push "$remote" --delete "$branch" || true
 
   cleanup-ci-images:
     name: Clean up staging images
