@@ -311,9 +311,11 @@ jobs:
             -f source_branch="${{ github.event.pull_request.head.ref }}" \
             -f source_pr_number="${{ github.event.pull_request.number }}"
 
-  # Last job: writes the workflow summary and publishes the "CI result" check run (required by branch protection).
+  # Last job: writes the workflow summary; its own check run is the "CI - Result" required by the ruleset. A job's
+  # check run always belongs to this run's check suite, unlike one POSTed through the API, which GitHub may file under
+  # another suite of the same SHA (the PR then never sees it).
   status:
-    name: CI Status
+    name: CI - Result
     needs:
       - check-target
       - build-test-base
@@ -323,25 +325,24 @@ jobs:
       - build-test-category
       - test-category
       - trigger-large-tiers
-    if: always() && needs.check-target.result != 'skipped' && !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    if: always() && needs.check-target.result != 'skipped'
     runs-on: ubuntu-latest
-    permissions:
-      checks: write
     steps:
-      - name: Generate summary and publish check run
-        id: check
+      - name: Generate summary and report the result
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEEDS: ${{ toJSON(needs) }}
+          SHOULD_RUN: ${{ needs.check-target.outputs.should_run }}
           RUNNER_TESTS: ${{ needs.check-target.outputs.runner_tests }}
           CONTENT_HASH: ${{ needs.check-target.outputs.content_hash }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |  # shell
-          # Generate summary and publish check run: failure/cancelled job -> failure; skipped jobs are fine
+          # Generate summary and report the result: failure/cancelled job -> failure; skipped jobs are fine
           FAILED=$(jq -r 'to_entries[] | select(.value.result == "failure") | .key' <<<"${NEEDS}" | paste -sd, -)
           CANCELLED=$(jq -r 'to_entries[] | select(.value.result == "cancelled") | .key' <<<"${NEEDS}" | paste -sd, -)
-          if [[ -n "${FAILED}" ]]; then
+          if [[ "${SHOULD_RUN}" != "true" ]]; then
+            # A skipped required check would count as passed: fail so fork PRs stay blocked until validated by hand
+            CONCLUSION=failure; TITLE="CI does not run for fork pull requests"
+          elif [[ -n "${FAILED}" ]]; then
             CONCLUSION=failure; TITLE="Failed: ${FAILED}"
           elif [[ -n "${CANCELLED}" ]]; then
             CONCLUSION=cancelled; TITLE="Cancelled: ${CANCELLED}"
@@ -359,18 +360,9 @@ jobs:
             echo
             echo "${SUMMARY}"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "Needs results:"
+          echo "CI - Result on ${HEAD_SHA}: ${CONCLUSION} - ${TITLE}"
           echo "${SUMMARY}"
-          echo "Publishing check run 'CI - Result' on ${HEAD_SHA} (conclusion=${CONCLUSION}, title='${TITLE}')"
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
-            -f name='CI - Result' -f head_sha="${HEAD_SHA}" -f status=completed -f conclusion="${CONCLUSION}" \
-            -f details_url="${RUN_URL}" -f 'output[title]'="${TITLE}" -f 'output[summary]'="${SUMMARY}" \
-            --jq '"Created check run \(.id) \(.name) on \(.head_sha) in check suite \(.check_suite.id): \(.status)/\(.conclusion) \(.html_url)"'
-          echo "conclusion=${CONCLUSION}" >> "$GITHUB_OUTPUT"
-
-      - name: Fail when the workflow failed
-        if: steps.check.outputs.conclusion != 'success'
-        run: |  # shell
-          # Fail when the workflow failed: mirror the check run's conclusion on this job
-          echo "::error::CI: ${{ steps.check.outputs.conclusion }}, see the summary above."
-          exit 1
+          if [[ "${CONCLUSION}" != "success" ]]; then
+            echo "::error::CI: ${CONCLUSION}, ${TITLE}"
+            exit 1
+          fi
