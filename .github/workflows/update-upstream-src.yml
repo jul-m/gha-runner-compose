@@ -99,30 +99,26 @@ jobs:
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           delete-branch: true
 
-      - name: Fast-forward submodule update through a temporary branch
+      - name: Run CI on the submodule bump through a temporary branch
+        id: ci_check
         if: steps.check_changes.outputs.changes == 'true' && steps.copy_sources.outputs.modified == 'false'
         timeout-minutes: 90
         env:
-          # App token: the PR it opens triggers the pull_request CI that produces the required "CI - Result" check
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          BASE_BRANCH: ${{ github.event.repository.default_branch }}
           SUBMODULE_REF: ${{ steps.copy_sources.outputs.submodule_ref }}
         run: |  # shell
-          # The base branch only accepts commits that already carry a passing "CI - Result": run it on a temporary
-          # branch, then push that exact SHA (fast-forward) so the check applies to it
+          # The base branch only accepts commits that already carry a passing "CI - Result": dispatch ci.yml on a
+          # temporary branch so the check is attached to the exact SHA that gets fast-forwarded afterwards
           set -euo pipefail
           branch=tmp/update-runner-images-src
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          trap 'git push origin --delete "$branch" || true' EXIT
 
           git commit -m "Update runner-images-src submodule to ${SUBMODULE_REF}"
           sha=$(git rev-parse HEAD)
-          git push --force "$remote" "HEAD:refs/heads/${branch}"
-          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
-            gh pr create --base "$BASE_BRANCH" --head "$branch" \
-              --title "Update runner-images-src submodule to ${SUBMODULE_REF}" \
-              --body "Automated submodule bump (mirrored scripts unchanged), fast-forwarded once CI - Result passes."
-          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          git push --force origin "HEAD:refs/heads/${branch}"
+          gh workflow run ci.yml --ref "$branch"
 
           while true; do
             read -r total pending failed <<< "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/check-runs" --jq \
@@ -131,19 +127,35 @@ jobs:
             if [ "$total" -eq 0 ] || [ "$pending" -gt 0 ]; then
               sleep 60
             elif [ "$failed" -gt 0 ]; then
-              echo "::error::CI - Result failed on ${sha}; the temporary branch and PR are kept for inspection"
+              echo "::error::CI - Result failed on ${sha}"
               exit 1
             else
               break
             fi
           done
 
+      # Fresh token: the one from the first step expires after 1 hour, shorter than a CI run
+      - name: Generate GitHub App token for the fast-forward
+        id: ff_token
+        if: steps.ci_check.outcome == 'success'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_KEY }}
+
+      - name: Fast-forward the base branch to the checked commit
+        if: steps.ci_check.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.ff_token.outputs.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          SHA: ${{ steps.ci_check.outputs.sha }}
+        run: |  # shell
+          set -euo pipefail
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git fetch --depth=1 "$remote" "$BASE_BRANCH"
-          git merge-base --is-ancestor FETCH_HEAD "$sha" \
+          git merge-base --is-ancestor FETCH_HEAD "$SHA" \
             || { echo "::error::${BASE_BRANCH} moved since the check ran, rerun the workflow"; exit 1; }
-          git push "$remote" "${sha}:refs/heads/${BASE_BRANCH}"
-          # GitHub may already have deleted the branch when the PR got merged
-          git push "$remote" --delete "$branch" || true
+          git push "$remote" "${SHA}:refs/heads/${BASE_BRANCH}"
 
   cleanup-ci-images:
     name: Clean up staging images
