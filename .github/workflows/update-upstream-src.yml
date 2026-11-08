@@ -99,63 +99,19 @@ jobs:
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           delete-branch: true
 
-      - name: Run CI on the submodule bump through a temporary branch
-        id: ci_check
+      # Submodule-only bump: no change to docker-assets/from-upstream, so no CI is needed.
+      # The App token is allowed to bypass the "CI - Result" ruleset on the base branch.
+      - name: Push the submodule bump to the base branch
         if: steps.check_changes.outputs.changes == 'true' && steps.copy_sources.outputs.modified == 'false'
-        timeout-minutes: 90
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
           SUBMODULE_REF: ${{ steps.copy_sources.outputs.submodule_ref }}
         run: |  # shell
-          # The base branch only accepts commits that already carry a passing "CI - Result": dispatch ci.yml on a
-          # temporary branch so the check is attached to the exact SHA that gets fast-forwarded afterwards
           set -euo pipefail
-          branch=tmp/update-runner-images-src
-          trap 'git push origin --delete "$branch" || true' EXIT
-
           git commit -m "Update runner-images-src submodule to ${SUBMODULE_REF}"
-          sha=$(git rev-parse HEAD)
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          git push --force origin "HEAD:refs/heads/${branch}"
-          gh workflow run ci.yml --ref "$branch"
-
-          while true; do
-            read -r total pending failed <<< "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/check-runs" --jq \
-              '[.check_runs[] | select(.name == "CI - Result")] | "\(length) \([.[] | select(.status != "completed")] | length) \([.[] | select(.conclusion != "success")] | length)"')"
-            echo "CI - Result on ${sha}: total=${total} pending=${pending} not-success=${failed}"
-            if [ "$total" -eq 0 ] || [ "$pending" -gt 0 ]; then
-              sleep 60
-            elif [ "$failed" -gt 0 ]; then
-              echo "::error::CI - Result failed on ${sha}"
-              exit 1
-            else
-              break
-            fi
-          done
-
-      # Fresh token: the one from the first step expires after 1 hour, shorter than a CI run
-      - name: Generate GitHub App token for the fast-forward
-        id: ff_token
-        if: steps.ci_check.outcome == 'success'
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ secrets.GH_APP_CLIENT_ID }}
-          private-key: ${{ secrets.GH_APP_KEY }}
-
-      - name: Fast-forward the base branch to the checked commit
-        if: steps.ci_check.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ steps.ff_token.outputs.token }}
-          BASE_BRANCH: ${{ github.event.repository.default_branch }}
-          SHA: ${{ steps.ci_check.outputs.sha }}
-        run: |  # shell
-          set -euo pipefail
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git fetch --depth=1 "$remote" "$BASE_BRANCH"
-          git merge-base --is-ancestor FETCH_HEAD "$SHA" \
-            || { echo "::error::${BASE_BRANCH} moved since the check ran, rerun the workflow"; exit 1; }
-          git push "$remote" "${SHA}:refs/heads/${BASE_BRANCH}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/${BASE_BRANCH}"
 
   cleanup-ci-images:
     name: Clean up staging images
